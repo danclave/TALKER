@@ -23,6 +23,7 @@ def transcribe_audio_file(audio_file_path: str, prompt: str) -> str:
             model="whisper-1",
             file= open(audio_file_path, "rb"),
             prompt=prompt,
+            language="uk",
         )
         text = transcript.text
         print(f"Transcription: {text}")

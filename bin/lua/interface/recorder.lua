@@ -9,6 +9,7 @@ local game_adapter = require('infra.game_adapter')
 local prompt_builder = require('infra.AI.prompt_builder')
 local mic = require('infra.mic.microphone')
 local interface = require('interface.interface')
+local json = require("infra.HTTP.json")
 
 local recorder = {}
 
@@ -38,8 +39,10 @@ function recorder.start()
         if not mic.is_mic_on() then return true end -- stop looping
         game_adapter.display_to_player(mic.get_status(), 0.1)
         local dialogue = mic.get_transcription()
+
         mic.clear_transcription()
         if not dialogue then return false end -- continue looping
+        dialogue = json.utf8_to_codepage(dialogue)
         mic.stop()
         interface.player_character_speaks(dialogue)
         return true  -- stop looping

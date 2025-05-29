@@ -117,7 +117,7 @@ def read_file(file_path):
 def write_to_file(file_path, content):
     """Writes content to a file."""
     try:
-        with open(file_path, 'w') as file:
+        with open(file_path, 'w', encoding='utf-8') as file:
             file.write(content)
         logging.debug(f"Wrote '{content}' to {file_path}.")
     except Exception as e:

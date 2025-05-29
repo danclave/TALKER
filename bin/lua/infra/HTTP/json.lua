@@ -573,4 +573,71 @@ function json.decode(str)
     return res
 end
 
+local function convert_to_utf8(text)
+    if not text then return nil end
+
+    -- Create reverse mapping from CP1251 to Unicode
+    local CP1251_to_unicode = {}
+    for unicode, cp1251 in pairs(CP1251) do
+        CP1251_to_unicode[cp1251] = unicode
+    end
+
+    local result = {}
+    for i = 1, #text do
+        local byte = text:byte(i)
+        if byte < 128 then
+            table.insert(result, string.char(byte))
+        else
+            local unicode = CP1251_to_unicode[byte]
+            if unicode then
+                if unicode <= 0x7F then
+                    table.insert(result, string.char(unicode))
+                elseif unicode <= 0x7FF then
+                    table.insert(result, string.char(0xC0 + math.floor(unicode / 64)))
+                    table.insert(result, string.char(0x80 + (unicode % 64)))
+                else
+                    table.insert(result, string.char(0xE0 + math.floor(unicode / 4096)))
+                    table.insert(result, string.char(0x80 + math.floor((unicode % 4096) / 64)))
+                    table.insert(result, string.char(0x80 + (unicode % 64)))
+                end
+            end
+        end
+    end
+    return table.concat(result)
+end
+
+function json.convert_to_utf8(text)
+    if type(text) ~= "string" then
+        error("expected argument of type string, got " .. type(text))
+    end
+
+    -- Convert CP1251 encoded text to UTF-8
+    local utf8_text = convert_to_utf8(text)
+
+    -- If the conversion fails, return nil
+    if not utf8_text then
+        return nil
+    end
+
+    -- Return the UTF-8 encoded text
+    return utf8_text
+end
+
+function json.utf8_to_codepage(utf8str)
+    if type(utf8str) ~= "string" then
+        error("expected argument of type string, got " .. type(utf8str))
+    end
+
+    -- Convert UTF-8 encoded text to CP1251
+    local cp1251_text = utf8_to_codepage(utf8str)
+
+    -- If the conversion fails, return nil
+    if not cp1251_text then
+        return nil
+    end
+
+    -- Return the CP1251 encoded text
+    return cp1251_text
+end
+
 return json

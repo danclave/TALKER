@@ -45,15 +45,22 @@ local function construct_request_body(messages, config, model)
     config = config or gpt.config_creative
     model = model or gpt.model_smart
 
+    local converted_messages = {}
     for i, msg in ipairs(messages) do
         if type(msg) == "table" and msg.content then
-            msg.content = msg.content:gsub('"', "'")
+            converted_messages[i] = {
+                role = msg.role,
+                content = json.convert_to_utf8(msg.content:gsub('"', "'"))
+            }
+        elseif msg.content then
+            converted_messages[i] = msg
+            converted_messages[i].content = json.convert_to_utf8(converted_messages[i].content)
         end
     end
 
     return {
         model = model,
-        messages = messages,
+        messages = converted_messages,
         temperature = config.temperature,
         top_p = config.top_p,
         max_tokens = config.max_tokens,
