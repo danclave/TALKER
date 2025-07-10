@@ -1,7 +1,7 @@
 package.path = package.path .. ";./bin/lua/?.lua;"
 local log = require('framework.logger')
 local game = require("infra.game_adapter")
-local interface = require("interface.interface")
+local trigger = require("interface.trigger")
 
 ----------------------------------------------------------------------------------------------------
 -- Constants
@@ -19,7 +19,7 @@ function create_emission_event(typ, status)
     local unformatted_description = "An %s is %s!"
     log.info(unformatted_description, typ, status)
     local witnesses = game.get_characters_near_player(200)
-    interface.register_game_event(unformatted_description, {typ, status}, witnesses, true)
+    trigger.talker_game_event(unformatted_description, {typ, status}, witnesses, true)
 end
 
 -- Technically this is triggered by more than just emissions, but our name filter takes care of that

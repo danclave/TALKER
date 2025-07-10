@@ -8,7 +8,6 @@ local logger = require('framework.logger')
 local game_adapter = require('infra.game_adapter')
 local prompt_builder = require('infra.AI.prompt_builder')
 local mic = require('infra.mic.microphone')
-local interface = require('interface.interface')
 local json = require("infra.HTTP.json")
 
 local recorder = {}
@@ -24,7 +23,7 @@ local function get_names_of_nearby_characters()
 end
 
 -- function recorder.to record the player's dialogue
-function recorder.start()
+function recorder.start(callback)
     logger.info("Listening for player dialogue...")
     mic.stop()
     mic.clear_transcription()
@@ -44,7 +43,9 @@ function recorder.start()
         if not dialogue then return false end -- continue looping
         dialogue = json.utf8_to_codepage(dialogue)
         mic.stop()
-        interface.player_character_speaks(dialogue)
+        if callback then
+            callback(dialogue)
+        end
         return true  -- stop looping
     end)
 end

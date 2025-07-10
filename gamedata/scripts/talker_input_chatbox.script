@@ -1,7 +1,7 @@
 --| based on Chernobyl Relay Chat
 package.path = package.path .. ";./bin/lua/?.lua;"
-local interface = require('interface.interface')
 local config = require("interface.config")
+local trigger = require("interface.trigger")
 -- Import game interface modules
 local queries = talker_game_queries
 
@@ -16,7 +16,7 @@ local showChatBox = false
 local ChatBoxEnabled = true
 
 local function process_player_input(input)
-	interface.player_character_speaks(input)
+    trigger.talker_player_speaks(input)
 end
 
 local function update()

@@ -1,0 +1,24 @@
+package.path = package.path .. ";./bin/lua/?.lua;"
+local logger = require('framework.logger')
+local interface = require('interface.interface')
+
+AddScriptCallback("talker_game_event")
+
+function talker_on_game_event_near_player(unformatted_description, event_objects, witnesses, important)
+    interface.register_game_event(unformatted_description, event_objects, witnesses, important)
+end
+
+function talker_safely_on_game_event(unformatted_description, event_objects, witnesses, important)
+    local success, err = pcall(talker_on_game_event_near_player, unformatted_description, event_objects, witnesses, important)
+    if not success then
+        logger.error("Error: " .. err)
+    end
+end
+
+function on_game_start()
+    RegisterScriptCallback("talker_game_event", talker_safely_on_game_event)
+end
+
+function is_loaded()
+    return true
+end

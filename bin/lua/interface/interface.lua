@@ -7,11 +7,6 @@ local m = {}
 
 -- prototype
 
-function m.register_game_event_near_player(unformatted_description, involved_objects, important)
-    local witnesses = game_adapter.get_characters_near_player()
-    m.register_game_event(unformatted_description, involved_objects, witnesses, important)
-end
-
 local function register_game_event(unformatted_description, event_objects, witnesses, important)
     log.info("Registering game event")
     local new_event = game_adapter.create_game_event(unformatted_description, event_objects, witnesses)
@@ -36,20 +31,6 @@ function m.register_game_event(unformatted_description, event_objects, witnesses
     if not success then
         log.error("Failed to register game event: %s", error)
     end
-end
-
-----------------------------------------------------------------------------------------------------
--- SEND PLAYER DIALOGUE TO GAME 
-----------------------------------------------------------------------------------------------------
-
--- function recorder.to register the player's dialogue as a game event
-function m.player_character_speaks(dialogue)
-    log.info("Registering player speak event. Player said: " .. dialogue)
-    local player = game_adapter.get_player_character()
-    -- register new event
-    m.register_game_event_near_player("%s said: %s", {player.name, dialogue}, true )
-    -- show dialogue in game UI
-    game_adapter.display_dialogue(player.game_id, dialogue)
 end
 
 return m

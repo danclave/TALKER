@@ -7,7 +7,7 @@
 package.path = package.path .. ";./bin/lua/?.lua;"
 local log = require('framework.logger')
 local game = require("infra.game_adapter")
-local interface = require("interface.interface")
+local trigger = require("interface.trigger")
 -- Import game interface modules
 local queries = talker_game_queries
 ----------------------------------------------------------------------------------------------------
@@ -38,7 +38,7 @@ end
 function create_anomaly_interaction_event(anomaly_name)
     local unformatted_description = "%s got very close to a %s"
     local player = game.get_player_character()
-    interface.register_game_event_near_player(unformatted_description, {player, anomaly_name})
+    trigger.talker_game_event_near_player( unformatted_description, {player, anomaly_name})
 end
 
 --------------------------------------------------------------------------------------------

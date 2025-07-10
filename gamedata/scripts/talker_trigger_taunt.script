@@ -1,7 +1,7 @@
 ---@diagnostic disable: undefined-global
 package.path = package.path .. ";./bin/lua/?.lua;"
 
-local interface = require("interface.interface")
+local trigger = require("interface.trigger")
 local game = require("infra.game_adapter")
 local log = require('framework.logger')
 
@@ -40,7 +40,7 @@ function on_enemy_eval(npc_obj, enemy_obj) -- could check for human enemy if we 
     local speaker = game.create_character(npc_obj)
     local witnesses = {speaker}
 
-    interface.register_game_event(unformatted_description, {speaker}, witnesses, true)
+    trigger.talker_game_event(unformatted_description, {speaker}, witnesses, true)
 end
 
 --------------------------------------------------------------------------------------------
