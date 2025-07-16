@@ -5,7 +5,7 @@
 package.path = package.path .. ";./bin/lua/?.lua;"
 local log = require('framework.logger')
 local game = require("infra.game_adapter")
-local interface = require("interface.interface")
+local trigger = require("interface.trigger")
 
 ----------------------------------------------------------------------------------------------------
 -- Constants
@@ -32,7 +32,7 @@ function on_player_reloads_weapon()
     local player_weapon = game.get_player_weapon()
     local witnesses = game.get_characters_near_player()
 
-    interface.register_game_event(unformatted_description, {player_character, player_weapon}, witnesses, true)
+    trigger.talker_game_event(unformatted_description, {player_character, player_weapon}, witnesses, true)
 
     log.info("Reload event registered")
 end

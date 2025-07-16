@@ -4,7 +4,7 @@
 
 package.path = package.path .. ";./bin/lua/?.lua;"
 local game = require("infra.game_adapter")
-local interface = require("interface.interface")
+local trigger = require("interface.trigger")
 
 local q = talker_game_queries
 local c = talker_game_commands
@@ -17,21 +17,21 @@ local function actor_on_item_use(obj)
    if not q.is_artifact(obj) then return end
 
     local description = string.format("%s used an artifact called %s", game.get_player_character(), q.get_item_name(obj))
-    interface.register_game_event_near_player(description)
+    trigger.talker_game_event_near_player(description)
 end
 
 local function actor_on_item_before_pickup(obj)
    if not q.is_artifact(obj) then return end
 
     local description = string.format("%s picked up an artifact called %s", game.get_player_character(), q.get_item_name(obj))
-    interface.register_game_event_near_player(description)
+    trigger.talker_game_event_near_player(description)
 end
 
 local function actor_on_item_drop(obj)
    if not q.is_artifact(obj) then return end
 
     local description = string.format("%s dropped an artifact called %s", game.get_player_character(), q.get_item_name(obj))
-    interface.register_game_event_near_player(description)
+    trigger.talker_game_event_near_player(description)
 end
 
 ----------------------------------------------------------------------------------------------------
