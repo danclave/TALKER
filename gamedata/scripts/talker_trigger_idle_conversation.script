@@ -18,7 +18,7 @@ local function cooldown_ready()
 end
 
 local function someone_should_make_idle_conversation()
-    local result = cooldown_ready() and queries.is_player_in_combat()
+    local result = cooldown_ready() and not queries.is_in_combat(queries.get_player())
     -- reset cooldown
     if result then last_idle_conversation_time_ms = queries.get_game_time_ms() end
     return result
