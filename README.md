@@ -1,6 +1,18 @@
 # TALKER
 A LLM powered dialogue generator for STALKER Anomaly
 
+> [!WARNING]
+> | ⚠️ **DEVELOPMENT BUILD - HERE BE DRAGONS** ⚠️ |
+> |:----------------------------------------:|
+> This build is a **Work-In-Progress (WIP)** and is **always experimental and highly unstable**. It contains features that are under active development, may be feature-incomplete, contain severe bugs, or have features that will be completely removed without warning.
+>
+> **Expect crashes, data loss, and unexpected behavior.**
+>
+> ---
+>
+> **For a stable release, please use the [`main` branch](https://github.com/danclave/TALKER/tree/main).** The `dev` branch is intended for testing and contributions.
+
+
 ![TALKER](images/talker.png)
 
 ## notes
