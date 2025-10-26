@@ -4,12 +4,12 @@ local interface = require('interface.interface')
 
 AddScriptCallback("talker_game_event")
 
-function talker_on_game_event_near_player(unformatted_description, event_objects, witnesses, important)
+function talker_on_game_event(unformatted_description, event_objects, witnesses, important)
     interface.register_game_event(unformatted_description, event_objects, witnesses, important)
 end
 
 function talker_safely_on_game_event(unformatted_description, event_objects, witnesses, important)
-    local success, err = pcall(talker_on_game_event_near_player, unformatted_description, event_objects, witnesses, important)
+    local success, err = pcall(talker_on_game_event, unformatted_description, event_objects, witnesses, important)
     if not success then
         logger.error("Error: " .. err)
     end
