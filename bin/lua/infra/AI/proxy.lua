@@ -3,6 +3,7 @@ local http   = require("infra.HTTP.HTTP")
 local json   = require("infra.HTTP.json")
 local log    = require("framework.logger")
 local config = require("interface.config")
+local inspect = require('framework.inspect')
 
 local proxy = {}
 
@@ -23,6 +24,7 @@ local PRESET = {
 
 -- helpers --------------------------------------------------------------
 local API_URL = "http://127.0.0.1:8000/v1/chat/completions"
+local API_MODELS_URL = "http://127.0.0.1:8000/v1/models"
 local API_KEY = config.PROXY_API_KEY
 
 local function build_body(messages, opts)
@@ -84,6 +86,44 @@ local function send(messages, cb, opts)
   end)
 end
 
+local function get_model_list()
+  local headers = {
+    ["Content-Type"]  = "application/json",
+    ["Authorization"] = "Bearer "..API_KEY,
+  }
+
+  local body_tbl = {}
+  local requestId = http.send_request(API_MODELS_URL, "GET", headers, body_tbl)
+
+  local response
+  local error
+  
+  -- ugly 5s busy timeout
+  local sec = tonumber(os.clock() + 5);
+  while not response and not error and ( os.clock() < sec ) do
+    log.info("waiting for models response");
+      response, error = http.check_response(requestId)
+  end
+
+  log.info("models response " .. inspect(response))
+
+  local resultPairs = {}
+  if response and response.data then
+    log.info("models list array result" .. inspect(response.data))
+    for i, v in ipairs(response.data) do
+      local pair = { v["id"], v["id"] }
+      log.info("adding the pair: " .. inspect(pair))
+      table.insert(resultPairs, pair)
+    end
+  elseif error then
+    log.error("models error" .. inspect(error))
+  else
+    log.info("models probably timeout")
+  end
+  log.info("models final table", inspect(resultPairs))
+  return resultPairs
+end
+
 -- public shortcuts -----------------------------------------------------
 function proxy.generate_dialogue(msgs, cb)
   return send(msgs, cb, PRESET.creative)
@@ -95,6 +135,10 @@ end
 
 function proxy.summarize_story(msgs, cb)
   return send(msgs, cb, {model=MODEL.fast, temperature=0.2})
+end
+
+function proxy.get_model_list()
+  return get_model_list()
 end
 
 return proxy
