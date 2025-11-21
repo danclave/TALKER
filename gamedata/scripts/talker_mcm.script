@@ -1,7 +1,6 @@
-
-
-
 local language = require("infra.language")
+local proxy = require("infra.AI.proxy")
+
 
 function on_mcm_load()
     options = {
@@ -29,8 +28,16 @@ function on_mcm_load()
                     {"0", "open-ai"},
                     {"1", "open-router-ai"},
                     {"2", "local-deepseek"},
-                    {"3", "proxy"},
+                    {"3", "proxy"}
                 }
+            },
+            {
+                id = "custom_ai_model2",
+                type = "list",
+                val = 0,
+                def = "",
+                no_str = true,
+                content = proxy.get_model_list()
             },
             {
                 id = "custom_ai_model",
