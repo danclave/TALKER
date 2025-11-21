@@ -15,11 +15,12 @@ local function register_game_event(unformatted_description, event_objects, witne
 end
 
 -- prevents issues later down the line with formatting
-local function check_format_sanity(unformatted_description, event_objects)
-    -- returns true if the amounts of format strings like %s match the amount of event_objects
+local function check_format_sanity(unformatted_description, ...)
+    local additional_args = {...}
     local format_count = select(2, unformatted_description:gsub("%%s", ""))
-    if not format_count == #event_objects then
-        log.error("Not enough event objects for description: %s", unformatted_description)
+    -- returns true if the amounts of variables like %s match the amount of arguments
+    if (format_count > 0) and (format_count > #unpack(additional_args)) then
+        log.error("Not enough arguments for description: %s", unformatted_description)
         return false
     end
     return true
