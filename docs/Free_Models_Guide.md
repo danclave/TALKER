@@ -4,6 +4,14 @@ This guide provides a detailed walkthrough for setting up and using free AI mode
 
 ---
 
+## Important Updates (December 2025)
+
+*   **Gemini Free Tier Gutted**: Google has drastically reduced Gemini API rate limits, making standard API keys essentially **unusable** for TALKER. Gemini 2.5 Pro has been **removed from the free tier entirely**. Flash and Flash-Lite are now limited to **20 requests per day** (down from 250-1,000). This is nowhere near enough for normal gameplay.
+*   **New Recommendations**: **Nvidia** is now the recommended free provider, with **iFlow** as an excellent alternative. Both offer generous limits and access to high-quality models.
+*   **Gemini CLI Still Works**: If you specifically want Gemini models, the **Gemini CLI (OAuth)** method still provides higher rate limits and remains viable.
+
+---
+
 ## Important Updates (September 2025)
 
 *   **New Nvidia Models Added**: Several new models from Nvidia have been added to the guide, including `kimi-k2-instruct-0905` (recommended), `qwen3-next-80b-a3b-instruct` (recommended), `mistral-small-24b-instruct`, `deepseek-v3.1`, and various other versions of `qwen`.
@@ -19,18 +27,31 @@ This guide provides a detailed walkthrough for setting up and using free AI mode
 
 ### A Note on Thinking Models
 
-"Thinking" models are designed for complex reasoning, which means they are often **considerably slower** than their non-thinking counterparts. For general use in the mod, **non-thinking models are usually the better choice** for a more responsive experience. However, **Gemini models are a notable exception**; their exceptional speed (Even Gemini Pro, which is faster and smarter than any other model on this list) makes them a powerful and viable option for thinking mode (In Auto MCM setting).
+"Thinking" models are designed for complex reasoning, which means they are often **considerably slower** than their non-thinking counterparts. For general use in the mod, **non-thinking models are usually the better choice** for a more responsive experience.
 
 ## Supported Free Providers
-1.  **Gemini (Recommended)**: Gemini is known for its exceptional speed and solid intelligence, often outperforming other free services by a significant margin. This makes it an excellent choice for the "thinking mode" feature in TALKER, providing quick and coherent responses.
-2.  **Nvidia**: Nvidia offers a robust selection of high-quality models. Their `kimi-k2-instruct` is a particularly strong performer for both reasoning and general dialogue. They also host free versions of popular models like DeepSeek and Qwen, though the specific rate limits for these are not always clear.
-3.  **Mistral (Preliminary)**: Mistral.ai offers a free tier with seemingly very decent usage limits. This provider is currently being investigated for full integration with TALKER, but early adopters can add their API keys to the proxy and experiment with models like Mistral Small, Mistral Large, and Mixtral reasoning models.
-4.  **Gemini CLI (Advanced - OAuth)**: An advanced provider using OAuth 2.0 to access Google's internal Gemini CLI API endpoints with significantly higher rate limits than standard API keys. Requires OAuth setup but provides access to the same high-quality Gemini models with much more generous usage limits.
-5.  **iFlow (Advanced - OAuth)**: A powerful aggregator platform providing free access to multiple premium models (Qwen, DeepSeek, GLM, Kimi) through OAuth 2.0 authentication. Supports both OAuth and direct API keys.
+1.  **Nvidia (Recommended)**: Nvidia offers a robust selection of high-quality models with generous rate limits. Their Mistral, Kimi and DeepSeek models are excellent performers for TALKER.
+2.  **iFlow (Recommended - OAuth)**: A powerful aggregator platform providing free access to multiple premium models (Qwen, DeepSeek, GLM, Kimi) through OAuth 2.0 authentication. Supports both OAuth and direct API keys. Very reliable.
+3.  **Gemini CLI (Advanced - OAuth)**: An advanced provider using OAuth 2.0 to access Google's internal Gemini CLI API endpoints with significantly higher rate limits than standard API keys. Requires OAuth setup but provides access to high-quality Gemini models.
+4.  **Mistral (Preliminary)**: Mistral.ai offers a free tier with seemingly very decent usage limits. This provider is currently being investigated for full integration with TALKER, but early adopters can add their API keys to the proxy and experiment with models like Mistral Small, Mistral Large, and Mixtral reasoning models.
+5.  **Gemini (API Keys)**: ⚠️ **No longer recommended.** Google has slashed free tier limits to ~20 requests/day, making this essentially unusable for normal gameplay. Use Nvidia, iFlow, or Gemini CLI instead.
 
 ---
 
-## 1. Gemini (Recommended)
+## 1. Gemini (API Keys)
+
+> ⚠️ **WARNING** ⚠️
+> 
+> As of December 2025, Google has gutted the Gemini free tier rate limits to the point of being **unusable for TALKER**. 
+
+---
+
+### Archived Information (For Reference Only)
+
+The information below is kept for historical reference but the rate limits and recommendations 
+are no longer accurate.
+
+---
 
 Google's Gemini is the top choice for its generous free tier and strong performance. By creating multiple projects, you can generate several API keys (up to 12 per account in our experience), which dramatically increases your free usage limits when used with the API proxy. Do note that it is recommended to use multiple accounts instead of maxing out projects - I don't have concrete evidence, but multiple users had their projects "banned" for some reason, and they were unable to create new projects or API keys. So multiple accounts with 2-4 keys each is more than enough.
 
