@@ -164,9 +164,9 @@ Here are some of the notable models available through Nvidia's API:
 
 | Model Name (Provider Prefix)                               | Notes                                                                                                |
 | ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `nvidia_nim/moonshotai/kimi-k2-instruct`                   | **Recommended.** One of the best models for storytelling and writing. Decently fast and reliable.     |
-| `nvidia_nim/moonshotai/kimi-k2-instruct-0905`              | **Recommended.** A versioned variant of kimi-k2-instruct, as excellent for storytelling and writing, but usually slower or even unavailable.    |
-| `nvidia_nim/qwen/qwen3-next-80b-a3b-instruct`              | **Recommended.** Non-thinking instruct version of Qwen, perfect for this use case - fast and almost always available.  |
+| `nvidia_nim/moonshotai/kimi-k2-instruct-0905`              | **Recommended.** A versioned variant of kimi-k2-instruct, as excellent for storytelling and writing.    |
+| `nvidia_nim/mistralai/mistral-large-3-675b-instruct-2512`              | **Recommended.** Newest version of the best storytelling and RP models ever. Non-reasoning, so responses are fast. Almost always available.    |
+| `nvidia_nim/qwen/qwen3-next-80b-a3b-instruct`              | **Recommended for fast/small model choice** Non-thinking instruct version of Qwen, perfect for this use case - fast and almost always available.  |
 | `nvidia_nim/meta/llama-4-maverick-17b-128e-instruct`       | A very fast model. Quality can vary and is very censored. But it is always available at high speed. It is sometimes too literal at what it does. Borders on unusable. |
 | `nvidia_nim/google/gemma-3-27b-it`                         | A powerful, but small, model from Google that is a great alternative to other options. Faster then mistral.   |
 | `nvidia_nim/mistralai/mistral-small-24b-instruct`          | Usually too slow, but can be used for instruct tasks when speed is not critical. A very good storytelling model. |
@@ -180,8 +180,7 @@ Here are some of the notable models available through Nvidia's API:
 
 | Model Name (Provider Prefix)                               | Notes                                                                                                                                      |
 | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `nvidia_nim/deepseek-ai/deepseek-r1-0528`                  | The latest and most powerful version of DeepSeek-R1, excellent for reasoning tasks. Too slow with reasoning and commonly unavailable.                                     |
-| `nvidia_nim/deepseek-ai/deepseek-r1`                       | The base version of DeepSeek-R1, a solid all-arounder. Faster, compared to 0528. Still not recommended   |
+| `nvidia_nim/stepfun-ai/step-3.5-flash`                     | **Recommended.** A fast and decent-ish model from StepFun. Good for general use cases by being fast.  |
 | `nvidia_nim/qwen/qwen3-next-80b-a3b-thinking`              | **Recommended.** A powerful and fast thinking model. Usually fast enough with reasoning—only recommended thinking model here.   |
 | `nvidia_nim/bytedance/seed-oss-36b-instruct`               | Interesting small thinking model that is, sadly, not very fast.  |
 
@@ -193,6 +192,7 @@ Here are some of the notable models available through Nvidia's API:
 
 | Model Name (Provider Prefix)                               | Notes                                                                                                                                      |
 | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `nvidia_nim/moonshotai/kimi-k2-instruct`                   | One of the best models for storytelling and writing. Decently fast but prone to formatting errors that can break responses.     |
 | `nvidia_nim/qwen/qwen3-235b-a22b`                          | A very large model from the Qwen family, capable of high-quality output but may be slower. (Thinking model by default in the mod)             |
 | `nvidia_nim/deepseek-ai/deepseek-v3.1`                     | Hybrid reasoning model that will reason if thinking is set to **high**. Suffers from availability issues like other DeepSeek models.   |
 | `nvidia_nim/deepseek-ai/deepseek-v3.1-terminus`            | Hybrid reasoning model that will reason if thinking is set to **high**. Suffers from availability issues like other DeepSeek models.   |
@@ -274,8 +274,8 @@ Gemini CLI is an advanced provider that uses OAuth 2.0 authentication to access 
 
 | Model Name (Provider Prefix)                     | Speed      | Intelligence | Notes                                                                                                                                                               |
 | ------------------------------------------------ | ---------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `gemini_cli/gemini-2.5-pro`                      | Slowest    | Smartest     | The most powerful model, ideal for complex dialogue and reasoning. Access to high-limit internal endpoints makes this much faster than the public API version.    |
-| `gemini_cli/gemini-2.5-flash`                    | Fast       | Smart        | **Recommended for most tasks.** Excellent balance of speed and intelligence with high rate limits.                                                                |
+| `gemini_cli/gemini-2.5-pro` / `gemini_cli/gemini-3.1-pro-preview` (only for paid accounts)                       | Slowest    | Smartest     | The most powerful model, ideal for complex dialogue and reasoning. Access to high-limit internal endpoints makes this much faster than the public API version.    |
+| `gemini_cli/gemini-2.5-flash` / `gemini_cli/gemini-3-flash-preview`                   | Fast       | Smart        | **Recommended for most tasks.** Excellent balance of speed and intelligence with high rate limits.                                                                |
 | `gemini_cli/gemini-2.5-flash-lite`               | Fastest    | Decent       | The quickest option with the highest rate limits. Perfect for fast-paced interactions.                                                                             |
 
 ### Rate Limits
@@ -283,10 +283,7 @@ Gemini CLI is an advanced provider that uses OAuth 2.0 authentication to access 
 Gemini CLI uses Google's internal Cloud Code API endpoints, which have significantly higher limits than the public API:
 
 *   **Estimated Limits**: Much higher than standard Gemini API (exact limits vary by project tier and usage patterns).
-*   **Tier Detection**: The proxy automatically detects your Google Cloud tier (free-tier, legacy-tier, or paid Gemini Advanced).
-
-> [!WARNING]
-> **Mixed Tier Warning**: If you load both free-tier and paid Gemini Advanced credentials simultaneously, you may experience unexpected behavior with model availability and rate limits. It's recommended to use consistent tier credentials.
+*   **Tier Detection**: The proxy automatically detects your Google Cloud tier (free-tier, legacy-tier, or paid Gemini).
 
 ### Technical Details
 
@@ -355,12 +352,11 @@ iFlow provides access to a wide variety of models from different providers. Here
 
 | Model Name (Provider Prefix)                     | Type              | Notes                                                                                                                                      |
 | ------------------------------------------------ | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `iflow/kimi-k2`                                  | General           | **Recommended.** Kimi's latest model, strong for storytelling and creative writing.                                                                         |
+| `iflow/kimi-k2`                                  | General           | Kimi's latest model, strong for storytelling and creative writing.                                                                         |
 | `iflow/kimi-k2-0905`                             | General           | **Recommended.** Versioned variant of Kimi K2.                                                                                                              |
 | `iflow/deepseek-v3.2`                            | General           | **Recommended.** Latest DeepSeek model with strong reasoning capabilities.                                                                                 |
 | `iflow/deepseek-v3.1`                            | Hybrid Reasoning  | **Recommended.** Hybrid model that will reason when thinking is enabled.                                                                                    |
 | `iflow/deepseek-r1`                              | Reasoning         | **Read note on thinking models in other sections** DeepSeek's dedicated reasoning model (slower but smarter).                                                                                 |
-| `iflow/glm-4.6`                                  | General           | GLM's latest general-purpose model.                                                                                                        |
 | `iflow/qwen3-max`                                | General           | **Recommended.** Qwen's most powerful general model.                                                                                                        |
 | `iflow/qwen3-235b-a22b-instruct`                 | Instruct          | **Recommended.** One of Qwen's largest instruction-following models.                                                                                        |
 | `iflow/qwen3-235b-a22b-thinking-2507`            | Reasoning         | **Read note on thinking models in other sections** Qwen's large-scale thinking/reasoning model.                                                                                               |
