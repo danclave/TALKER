@@ -13,7 +13,7 @@ import numpy as np
 import requests
 import soundfile as sf
 
-from languages import vosk_model_name, vosk_model_url, LANGUAGES
+from languages import vosk_model_info, vosk_model_url, vosk_model_is_big, LANGUAGES
 from vosk import KaldiRecognizer, Model as VoskModel, SetLogLevel
 
 logging.basicConfig(encoding="utf-8")
@@ -36,14 +36,16 @@ _model_lang = None
 # MODEL LOADING (singleton)
 ################################################################################################
 
-def _download_model(model_name: str, url: str) -> Path:
+def _download_model(model_name: str, url: str, size_mb: int) -> Path:
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
     target_dir = MODELS_DIR / model_name
     # archives from alphacephei extract to a folder named exactly like the model
     if target_dir.is_dir() and any(target_dir.iterdir()):
         return target_dir
 
-    print(f"Downloading Vosk model '{model_name}' (~40 MB, one time)...")
+    print(f"Downloading Vosk model '{model_name}' (~{size_mb} MB, one time)...")
+    if size_mb >= 150:
+        print("[WARN] This is a large model - it will use more resources and be slow.")
     try:
         response = requests.get(url, stream=True, timeout=120)
         response.raise_for_status()
@@ -70,15 +72,15 @@ def get_model(lang: str = FALLBACK_LANG):
     if _model is not None and _model_lang == lang:
         return _model
 
-    use_lang = lang if vosk_model_name(lang) else FALLBACK_LANG
+    use_lang = lang if vosk_model_info(lang) else FALLBACK_LANG
     if use_lang != lang:
         print(f"[WARN] No Vosk model for '{lang}' "
               f"({LANGUAGES.get(lang, lang)}), falling back to English. "
               f"Consider the Whisper provider for this language.")
 
-    model_name = vosk_model_name(use_lang)
+    model_name, size_mb = vosk_model_info(use_lang)
     url = vosk_model_url(use_lang)
-    model_dir = _download_model(model_name, url)
+    model_dir = _download_model(model_name, url, size_mb)
     _model = VoskModel(str(model_dir))
     _model_lang = use_lang
     print(f"[OK] Vosk model '{model_name}' loaded.")

@@ -8,6 +8,12 @@ from pathlib import Path
 from faster_whisper import WhisperModel
 from languages import LANGUAGES
 
+try:
+    from faster_whisper.tokenizer import _LANGUAGE_CODES
+    _WHISPER_LANGS = set(_LANGUAGE_CODES)
+except Exception:  # pragma: no cover - fallback if internals change
+    _WHISPER_LANGS = None
+
 logging.basicConfig(encoding="utf-8")
 
 ################################################################################################
@@ -78,20 +84,30 @@ def get_model(lang=None):
 # TRANSCRIPTION
 ################################################################################################
 
+def _normalize_lang(lang):
+    """Map accent/region codes to base languages whisper understands (en-gb -> en)."""
+    if lang and "-" in lang:
+        base = lang.split("-", 1)[0]
+        if _WHISPER_LANGS is None or base in _WHISPER_LANGS:
+            return base
+    return lang
+
+
 def transcribe_audio_file(audio_path: str,
                           prompt: str,
                           lang: str = "en",
                           out_path: str | None = None) -> str:
     """Transcribe audio using local faster-whisper model.
 
-    NOTE:     initial_prompt only helps when it matches the audio language.
+    NOTE: initial_prompt only helps when it matches the audio language.
     Whisper has no translation for arbitrary prompts, so it is passed
     only for English audio and skipped otherwise to avoid degrading output.
     """
+    lang = _normalize_lang((lang or "").lower())
     model = get_model(lang)
-
-    if lang not in LANGUAGES:
-        logging.warning("Unknown language code '%s', falling back to auto-detect.", lang)
+    supported = _WHISPER_LANGS if _WHISPER_LANGS is not None else set(LANGUAGES)
+    if lang not in supported:
+        logging.warning("Language '%s' is not supported by whisper, falling back to auto-detect.", lang)
         lang = None
 
     whisper_kwargs = {"language": lang}

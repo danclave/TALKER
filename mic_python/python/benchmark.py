@@ -27,7 +27,9 @@ GROUND_TRUTH = {
 }
 
 DEFAULT_ENGINES = ["vosk:en", "vosk:ru", "vosk:pl",
-                   "whisper:tiny", "whisper:base", "whisper:small"]
+                   "whisper:tiny", "whisper:tiny.en",
+                   "whisper:base", "whisper:base.en",
+                   "whisper:small", "whisper:small.en"]
 ENGINE_TIMEOUT_S = 900  # per-engine hard kill
 
 
@@ -105,7 +107,10 @@ def run_child(engine, audio_dir):
             result[f"{lang}_text"] = text
     elif kind == "vosk":
         import vosk_local
+        from languages import vosk_model_info
         lang = param
+        info = vosk_model_info(lang)
+        result["model"] = info[0] if info else None
         t0 = time.perf_counter()
         vosk_local.get_model(lang)                 # cold load (downloads on first ever run)
         result["load_s"] = round(time.perf_counter() - t0, 2)
@@ -191,7 +196,7 @@ def main():
         if "error" in r:
             print(f"| {r['engine']} | FAILED | {r['error'][:60]} | | | | | | {r.get('peak_rss_mb', '-')} |")
             continue
-        cells = [r["engine"], fmt_cell(r, "load_s"),
+        cells = [r.get("model") or r["engine"], fmt_cell(r, "load_s"),
                  fmt_cell(r, "en_s"), fmt_cell(r, "en_wer"),
                  fmt_cell(r, "ru_s"), fmt_cell(r, "ru_wer"),
                  fmt_cell(r, "pl_s"), fmt_cell(r, "pl_wer"),

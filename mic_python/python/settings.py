@@ -6,24 +6,24 @@ import json
 import sys
 from pathlib import Path
 
-from languages import LANGUAGES, language_display_order, language_name
+from languages import LANGUAGES, language_display_order, language_name, vosk_model_info, vosk_model_is_big
 
 ROOT_DIR = Path(getattr(sys, "frozen", False) and sys.executable or __file__).resolve().parent
 SETTINGS_FILE = ROOT_DIR / "talker_mic_settings.json"
 
 # Selectable providers in the menu (whisper_api stays CLI-only for compatibility)
 PROVIDERS = {
-    "whisper_local": "Whisper local  - offline, 99 languages, best accuracy",
-    "vosk_local":    "Vosk local     - offline, ultra-light (~40 MB models)",
+    "vosk_local":    "Vosk local     - RECOMMENDED: specialized per-language models, light & fast",
+    "whisper_local": "Whisper local  - multilingual fallback (100 languages), heavier",
     "gemini_proxy":  "Gemini proxy   - best quality, requires the API proxy",
 }
 
 WHISPER_MODELS = {
-    "tiny":            "tiny            ~75 MB   fastest, lowest accuracy",
-    "base":            "base            ~145 MB  fast, decent accuracy",
-    "small":           "small           ~490 MB  recommended balance",
-    "medium":          "medium          ~1.5 GB  accurate, slower",
-    "large-v3-turbo":  "large-v3-turbo  ~1.6 GB  best accuracy, needs strong CPU",
+    "tiny":            "tiny            ~75 MB   English: great (auto .en variant). Multilingual: weak",
+    "base":            "base            ~145 MB  light all-rounder; non-English accuracy mediocre",
+    "small":           "small           ~490 MB  minimum for good multilingual; ~700 MB RAM, ~3 s/clip",
+    "medium":          "medium          ~1.5 GB  NOT RECOMMENDED - too heavy and slow for gameplay",
+    "large-v3-turbo":  "large-v3-turbo  ~1.6 GB  NOT RECOMMENDED - too heavy and slow for gameplay",
 }
 
 GEMINI_VOICE_MODES = [
@@ -32,7 +32,7 @@ GEMINI_VOICE_MODES = [
 ]
 
 DEFAULT_SETTINGS = {
-    "provider": "whisper_local",
+    "provider": "vosk_local",
     "language": "en",
     "whisper_model": "small",
     "gemini_models": ["gemini/gemini-3.5-flash-lite", "gemini/gemini-3.1-flash-lite"],
@@ -100,8 +100,11 @@ def _pick_from_list(entries, title):
         print("  Invalid choice.")
 
 
-def pick_language(current):
-    """Searchable language picker. EN/RU first, then the rest alphabetically."""
+def pick_language(current, vosk_hint=False):
+    """Searchable language picker. EN/RU first, then the rest alphabetical.
+
+    vosk_hint: mark languages whose Vosk model is big (slow, resource heavy).
+    """
     code = current
     while True:
         query = _input("\n  Language search (name or code, blank = list all, '-' = back): ").lower()
@@ -114,8 +117,16 @@ def pick_language(current):
         if not matches:
             print("  No language matches that search.")
             continue
-        entries = [f"{LANGUAGES[c]} ({c})" + ("  [current]" if c == current else "")
-                   for c in matches]
+        entries = []
+        for c in matches:
+            label = f"{LANGUAGES[c]} ({c})"
+            if c == current:
+                label += "  [current]"
+            if vosk_hint and vosk_model_info(c) and vosk_model_is_big(c):
+                label += f"  [vosk: ~{vosk_model_info(c)[1]} MB, big]"
+            elif vosk_hint and not vosk_model_info(c):
+                label += "  [no vosk model -> whisper only]"
+            entries.append(label)
         pick = _pick_from_list(entries, f"Languages ({len(matches)} found)")
         if pick is not None:
             code = matches[pick]
@@ -228,6 +239,7 @@ def run_menu(settings, on_test=None):
         print("  6) Gemini voice models")
         if on_test is not None:
             print("  7) Test transcription (speak into your mic)")
+        print("  8) Manage downloaded models (view / delete)")
         print("  0) Exit")
         choice = _input("  Select: ")
 
@@ -242,7 +254,8 @@ def run_menu(settings, on_test=None):
             if pick is not None:
                 settings["provider"] = list(PROVIDERS)[pick]
         elif choice == "4":
-            settings["language"] = pick_language(settings["language"])
+            settings["language"] = pick_language(
+                settings["language"], vosk_hint=settings["provider"] == "vosk_local")
         elif choice == "5":
             settings["whisper_model"] = pick_whisper_model(settings["whisper_model"])
         elif choice == "6":
@@ -254,6 +267,9 @@ def run_menu(settings, on_test=None):
                 print("\n  Test interrupted.")
             except Exception as e:
                 print(f"  Test failed: {e}")
+        elif choice == "8":
+            import models_manager
+            models_manager.run_manager()
         elif choice == "0":
             print("Exiting without starting the microphone service.")
             raise SystemExit(0)
