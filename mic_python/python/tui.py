@@ -1,628 +1,704 @@
 # tui.py
-# interactive terminal UI for the TALKER mic app
-# rich for rendering, prompt_toolkit for raw key input
-# arrow-key navigation, type-to-search, multi-select with reordering
+# Textual-based TUI for the TALKER mic app - the "zone comms console"
+# arrow keys AND mouse, clickable everything, live test pane with Stop
+# (the classic prompt_toolkit TUI lives on as tui_old.py / talker_mic_old.exe)
 
-import sys
-from types import SimpleNamespace
+import threading
 
 from rich import box
-from rich.console import Console, Group
+from rich.console import Group
 from rich.panel import Panel
-from rich.rule import Rule
 from rich.table import Table
 from rich.text import Text
+
+from textual import work
+from textual.app import App, ComposeResult
+from textual.binding import Binding
+from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.reactive import reactive
+from textual.screen import ModalScreen
+from textual.widgets import (
+    Button, ContentSwitcher, Footer, Header, Input, Label, OptionList, Static, Tree,
+)
+from textual.widgets.option_list import Option
 
 from languages import (LANGUAGES, language_display_order, vosk_model_options,
                        vosk_model_info, whisper_supported, VOSK_BIG_MB)
 import models_manager
+from settings import (GEMINI_VOICE_MODES as GEMINI_MODELS_CANDIDATES, PROVIDERS,
+                      WHISPER_MODELS, save_settings)
 
-ESC = "\x1b"
+# ---------------------------------------------------------------- theme
+BG = "#0a0e0a"
+CHROME = "#101710"
+PANEL = "#0d130d"
+BORDER = "#2c3a2c"
+ACCENT = "#9dff57"          # radiation green
+ACCENT_DIM = "#1d3316"
+TEXT = "#d8e8d0"
+MUTED = "#6b7d6b"
+AMBER = "#ffb000"           # anomaly warning
+BAD = "#ff5544"
 
+VIEWS = [
+    ("home", "HOME  ·  base"),
+    ("test", "RADIO CHECK  ·  live test"),
+    ("provider", "CHANNEL  ·  provider"),
+    ("language", "TONGUE  ·  language"),
+    ("whisper", "WHISPER  ·  model size"),
+    ("gemini", "GEMINI  ·  fallback chain"),
+    ("manager", "STASH  ·  model vault"),
+]
+VIEW_KEYS = [k for k, _ in VIEWS]
 
-################################################################################################
-# KEY INPUT
-################################################################################################
+CSS = f"""
+Screen {{
+    background: {BG};
+    color: {TEXT};
+}}
+Header {{
+    background: {CHROME};
+    color: {TEXT};
+}}
+Footer {{
+    background: {CHROME};
+}}
+#sidebar {{
+    width: 36;
+    min-width: 30;
+    background: {PANEL};
+    border-right: solid {BORDER};
+    padding: 1 1 0 1;
+}}
+#sidebar Label.title {{
+    color: {ACCENT};
+    text-style: bold;
+    margin-bottom: 0;
+}}
+#sidebar Label.sub {{
+    color: {MUTED};
+    margin-bottom: 1;
+}}
+Tree {{
+    background: transparent;
+    color: {TEXT};
+    scrollbar-size: 1 1;
+}}
+Tree:focus > .tree--cursor {{
+    background: {ACCENT_DIM};
+    color: {TEXT};
+    text-style: bold;
+}}
+.tree--cursor {{
+    background: #16211a;
+}}
+.tree--guides {{
+    color: {BORDER};
+}}
+#setup-strip, #cache-strip {{
+    color: {MUTED};
+    margin-top: 1;
+}}
+#contentwrap {{
+    padding: 1 2 0 2;
+}}
+ContentSwitcher {{
+    height: 1fr;
+}}
+.pane {{ height: 1fr; }}
+Static.hint, Label.hint {{ color: {MUTED}; margin-bottom: 1; }}
+Static.logbox {{
+    border: round {BORDER};
+    padding: 1;
+    height: 1fr;
+    color: {TEXT};
+}}
+Input, OptionList {{
+    border: solid {BORDER};
+    margin-bottom: 1;
+}}
+Input:focus, OptionList:focus {{ border: solid {ACCENT}; }}
+Button {{
+    margin-right: 1;
+    margin-bottom: 1;
+}}
+Button.-primary {{ border: solid {ACCENT}; }}
+Button.-warning {{ border: solid {AMBER}; }}
+Button.-error {{ border: solid {BAD}; }}
+ModalScreen {{
+    align: center middle;
+    background: {BG} 85%;
+}}
+#modal-box, .modalbox {{
+    width: 60%;
+    max-width: 80;
+    background: {PANEL};
+    border: solid {ACCENT};
+    padding: 1 2;
+}}
+HelpBody {{ color: {TEXT}; }}
+"""
 
-def _normalize_key(key):
-    """Map a prompt_toolkit key to a simple string: up/down/enter/escape/... or a char."""
-    mapping = {
-        "up": "up", "down": "down", "left": "left", "right": "right",
-        "enter": "enter", "escape": "escape", "backspace": "backspace",
-        "space": "space", "home": "home", "end": "end",
-        "pageup": "pgup", "pagedown": "pgdn", "delete": "delete",
-        "s-up": "shift-up", "s-down": "shift-down",
-        "c-c": "ctrl-c", "c-d": "ctrl-d", "tab": "tab",
-    }
-    name = str(key)
-    if name in mapping:
-        return mapping[name]
-    if len(name) == 1:
-        return name
-    return None
-
-
-class KeySourceExhausted(Exception):
-    """Raised when the key stream ends (window closed / stdin gone)."""
-
-
-class RealKeySource:
-    """Reads keys from the real terminal via prompt_toolkit (one long-lived stream).
-
-    NOTE: on Windows, Win32Input.read_keys() is a *poll* - it returns an
-    empty list when no keys are pending instead of blocking (unlike the
-    POSIX Vt100Input). We therefore loop with a short sleep; an ended
-    stream is only signaled by read_keys() raising (stdin closed).
-    """
-
-    POLL_SECONDS = 0.02
-
-    def __init__(self):
-        from prompt_toolkit.input import create_input
-        self._input = create_input()
-        self._gen = self._gen_keys()
-
-    def _gen_keys(self):
-        import time
-        with self._input.raw_mode():
-            while True:
-                try:
-                    key_presses = self._input.read_keys()
-                except Exception:
-                    return  # stdin closed (window X / terminal gone)
-                if not key_presses:
-                    time.sleep(self.POLL_SECONDS)
-                    continue
-                for key_press in key_presses:
-                    yield SimpleNamespace(key=_normalize_key(key_press.key))
-
-    def keys(self):
-        return self._gen
-
-
-class FakeKeySource:
-    """Replays a scripted list of normalized key names (for tests)."""
-
-    def __init__(self, script):
-        self._gen = (SimpleNamespace(key=k) for k in script)
-
-    def keys(self):
-        return self._gen
-
-
-def get_key(key_source):
-    """Next key press, or None when the key stream has ended."""
-    try:
-        return next(key_source.keys()).key
-    except StopIteration:
-        return None
-
-
-################################################################################################
-# RENDER HELPERS
-################################################################################################
-
-STYLE_TITLE = "bold cyan"
-STYLE_SEL = "bold black on cyan"
-STYLE_HINT = "dim"
-STYLE_WARN = "bold red"
-STYLE_GOOD = "green"
-STYLE_TAG_VOSK = "green"
-STYLE_TAG_WHISPER = "cyan"
-STYLE_TAG_BAD = "red"
-
-PAGE_SIZE = 14
-
-
-def _clear(console):
-    console.file.write("\x1b[2J\x1b[3J\x1b[H")
-    console.file.flush()
-
-
-def _menu_rows(items, selected):
-    """items: list of markup label strings. Returns Text rows with selection marker."""
-    rows = []
-    for i, label in enumerate(items):
-        marker = "❯ " if i == selected else "  "
-        row = Text()
-        row.append(marker, "bold cyan" if i == selected else "dim")
-        try:
-            row.append(Text.from_markup(label))
-        except Exception:
-            row.append(label)
-        if i == selected:
-            row.stylize("bold")
-        rows.append(row)
-    return rows
-
-
-def _window(rows, selected):
-    """Return a slice of rows centered sensibly around the selection."""
-    if len(rows) <= PAGE_SIZE:
-        return rows, selected, 0
-    start = max(0, min(selected - PAGE_SIZE // 2, len(rows) - PAGE_SIZE))
-    return rows[start:start + PAGE_SIZE], selected - start, start
+HOME_INTRO = (
+    "The Zone listens. Configure your rig, then go live.\n"
+    "Settings stash themselves when you start the service."
+)
 
 
-def _footer(*pairs):
-    parts = []
-    for key, action in pairs:
-        parts.append(f"[bold]{key}[/bold] {action}")
-    return Text.from_markup("  ·  ".join(parts), style=STYLE_HINT)
-
-
-def _provider_label(key, desc):
-    if "RECOMMENDED" in desc:
-        return f"[bold yellow]{desc}[/]"
-    return desc
-
-
-def _language_tag(code, overrides):
+def _lang_tag(code):
     info = vosk_model_info(code)
     if info:
-        tag = f"vosk ~{info[1]} MB"
-        style = STYLE_TAG_VOSK
+        tag = f"vosk ~{info[1]}MB"
         if info[1] >= VOSK_BIG_MB:
             tag += " BIG"
-            style = "yellow"
+        if len(vosk_model_options(code)) > 1:
+            tag += f",{len(vosk_model_options(code))} models"
+    else:
+        tag = "no vosk"
+    return f"{tag} | {'whisper' if whisper_supported(code) else 'no whisper'}"
+
+
+# ---------------------------------------------------------------- modals
+class HelpModal(ModalScreen):
+    BINDINGS = [Binding("escape,f1,q,enter", "close", "Close", show=False)]
+
+    def compose(self) -> ComposeResult:
+        rows = [
+            ("mouse", "everything is clickable"),
+            ("Up/Dn / wheel", "move"),
+            ("Enter / click", "select"),
+            ("1 - 7", "jump between panes"),
+            ("s", "save settings"),
+            ("/", "focus the language filter"),
+            ("F1", "this help"),
+            ("q", "quit"),
+        ]
+        t = Table.grid(padding=(0, 3))
+        t.add_column(style=ACCENT, no_wrap=True)
+        t.add_column(style=TEXT)
+        for k, v in rows:
+            t.add_row(k, v)
+        body = Group(
+            Text("Zone comms console", style=f"bold {TEXT}"),
+            Text(" "),
+            t,
+            Text(" "),
+            Text("Local models cache on disk; purge them in the STASH.", style=MUTED),
+        )
+        yield Static(Panel(body, title="[accent]HELP[/]", title_align="left",
+                           border_style=ACCENT, box=box.ROUNDED), classes="modalbox")
+
+    def action_close(self) -> None:
+        self.dismiss(False)
+
+
+class ConfirmModal(ModalScreen):
+    BINDINGS = [Binding("escape", "no", "No", show=False),
+                Binding("enter", "no", "No", show=False)]
+
+    def __init__(self, question: str):
+        super().__init__()
+        self.question = question
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="modalbox"):
+            yield Static(self.question, classes="HelpBody")
+            with Horizontal():
+                yield Button("No, keep it", id="confirm-no")
+                yield Button("Yes, delete", id="confirm-yes", variant="error")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        self.dismiss(event.button.id == "confirm-yes")
+
+
+class ModelPickModal(ModalScreen):
+    """Choose between multiple vosk models for one language."""
+
+    BINDINGS = [Binding("escape", "cancel", "Cancel", show=False)]
+
+    def __init__(self, code: str, options: list):
+        super().__init__()
+        self.code = code
+        self.options = options
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="modalbox"):
+            yield Static(f"Vosk models for {LANGUAGES.get(self.code, self.code)}",
+                         classes="HelpBody")
+            yield OptionList(*[
+                Option(f"{name}  (~{size} MB)" + ("  [latest]" if i == 0 else ""),
+                       id=name)
+                for i, (name, size) in enumerate(self.options)
+            ], id="model-pick-list")
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        data = getattr(event.option, "id", None)
+        self.dismiss(data)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+# ---------------------------------------------------------------- app
+class MicApp(App):
+    CSS = CSS
+    TITLE = "TALKER MIC - Zone Comms"
+    BINDINGS = [
+        Binding("q", "quit_service", "Quit"),
+        Binding("s", "save", "Save"),
+        Binding("f1", "help", "Help", key_display="F1"),
+        Binding("1", "goto_view('home')", show=False),
+        Binding("2", "goto_view('test')", show=False),
+        Binding("3", "goto_view('provider')", show=False),
+        Binding("4", "goto_view('language')", show=False),
+        Binding("5", "goto_view('whisper')", show=False),
+        Binding("6", "goto_view('gemini')", show=False),
+        Binding("7", "goto_view('manager')", show=False),
+        Binding("/", "focus_filter", show=False),
+    ]
+
+    current_view = reactive("home")
+    _test_stop = None  # threading.Event while a radio check runs
+
+    def __init__(self, settings: dict, test_func=None):
+        super().__init__()
+        self.settings = settings
+        self._test_func = test_func
+        self._gem_order = []  # display order of gemini candidates
+        self._mgr_focus = "vosk"  # which stash list is active
+
+    # ---- layout ---------------------------------------------------------
+    def compose(self) -> ComposeResult:
+        yield Header(show_clock=False)
+        with Horizontal(id="main"):
+            with Vertical(id="sidebar"):
+                yield Label("TALKER MIC", classes="title")
+                yield Label("zone comms console", classes="sub")
+                tree: Tree = Tree("Views", id="nav")
+                for key, label in VIEWS:
+                    tree.root.add(label, data=key)
+                tree.root.expand()
+                yield tree
+                yield Static(self._setup_strip(), id="setup-strip")
+                yield Static(self._cache_strip(), id="cache-strip")
+            with Vertical(id="contentwrap"):
+                with ContentSwitcher(id="content"):
+                    with VerticalScroll(id="home", classes="pane"):
+                        yield Static(self._home_body(), id="home-body")
+                        with Horizontal():
+                            yield Button("GO LIVE - start mic service",
+                                         id="btn-start", variant="primary")
+                            yield Button("Save settings", id="btn-save")
+                    with Vertical(id="test", classes="pane"):
+                        yield Static("", id="test-log", classes="logbox")
+                        with Horizontal():
+                            yield Button("Start radio check", id="test-start",
+                                         variant="primary")
+                            yield Button("Stop recording", id="test-stop",
+                                         variant="warning", disabled=True)
+                    with VerticalScroll(id="provider", classes="pane"):
+                        yield Label("Comms channel - who transcribes your voice",
+                                    classes="hint")
+                        yield OptionList(*self._provider_options(), id="provider-list")
+                    with Vertical(id="language", classes="pane"):
+                        yield Label("Tongue - pinned first, type to filter",
+                                    classes="hint")
+                        yield Input(placeholder="filter languages...  (/ to focus)",
+                                    id="lang-filter")
+                        yield OptionList(*self._language_options(""), id="lang-list")
+                    with VerticalScroll(id="whisper", classes="pane"):
+                        yield Label("Whisper model size - heavier is NOT better",
+                                    classes="hint")
+                        yield OptionList(*self._whisper_options(), id="whisper-list")
+                    with Vertical(id="gemini", classes="pane"):
+                        yield Label("Gemini chain - tried top to bottom",
+                                    classes="hint")
+                        yield OptionList(*self._gemini_options(), id="gemini-list")
+                        with Horizontal():
+                            yield Button("Toggle on/off", id="gem-toggle")
+                            yield Button("Move up", id="gem-up")
+                            yield Button("Move down", id="gem-down")
+                    with VerticalScroll(id="manager", classes="pane"):
+                        yield Label("Stash - local models on disk", classes="hint")
+                        yield Static("", id="mgr-location", classes="hint")
+                        yield OptionList(*self._mgr_vosk_options(), id="mgr-vosk")
+                        yield OptionList(*self._mgr_whisper_options(),
+                                         id="mgr-whisper")
+                        with Horizontal():
+                            yield Button("Delete selected", id="mgr-delete",
+                                         variant="error")
+                            yield Button("Refresh", id="mgr-refresh")
+        yield Footer()
+
+    def on_mount(self) -> None:
+        tree = self.query_one("#nav", Tree)
+        tree.root.expand()
+        tree.cursor_line = 1
+        self.query_one("#content", ContentSwitcher).current = "home"
+        self._refresh_manager()
+
+    # ---- sidebar strips --------------------------------------------------
+    def _setup_strip(self) -> Text:
+        s = self.settings
+        lines = [f"{s['provider'].replace('_', ' ')}  ·  "
+                 f"{LANGUAGES.get(s['language'], s['language'])} ({s['language']})"]
+        if s["provider"] == "whisper_local":
+            lines.append(f"whisper {s['whisper_model']}")
+        if s["provider"] == "gemini_proxy":
+            lines.append(" -> ".join(m.split("/")[-1] for m in s["gemini_models"]))
+        override = (s.get("vosk_model_overrides") or {}).get(s["language"])
+        if override:
+            lines.append(f"vosk: {override}")
+        return Text("\n".join(lines), style=MUTED)
+
+    def _cache_strip(self) -> Text:
+        vosk = len(models_manager.list_vosk_models())
+        whisper = len(models_manager.list_whisper_models())
+        total = sum(e[2] for e in models_manager.list_vosk_models()) + \
+            sum(e[2] for e in models_manager.list_whisper_models())
+        return Text(f"stash: {vosk} vosk / {whisper} whisper  ~{total} MB", style=MUTED)
+
+    def _refresh_strips(self) -> None:
+        try:
+            self.query_one("#setup-strip", Static).update(self._setup_strip())
+            self.query_one("#cache-strip", Static).update(self._cache_strip())
+        except Exception:
+            pass
+
+    # ---- pane bodies -----------------------------------------------------
+    def _home_body(self):
+        s = self.settings
+        t = Table.grid(padding=(0, 2))
+        t.add_column(style=MUTED, justify="right")
+        t.add_column(style=TEXT)
+        t.add_row("channel:", s["provider"].replace("_", " "))
+        t.add_row("tongue:", f"{LANGUAGES.get(s['language'], s['language'])} ({s['language']})")
+        if s["provider"] == "whisper_local":
+            t.add_row("whisper:", s["whisper_model"])
+        if s["provider"] == "gemini_proxy":
+            t.add_row("chain:", "\n  ".join(m for m in s["gemini_models"]))
+        override = (s.get("vosk_model_overrides") or {}).get(s["language"])
+        if override:
+            t.add_row("vosk:", override)
+        return Panel(
+            Group(Text(HOME_INTRO, style=MUTED), Text(" "), t),
+            title=f"[{ACCENT}]RIG[/]", title_align="left",
+            border_style=BORDER, box=box.ROUNDED,
+        )
+
+    def _provider_options(self):
+        rows = []
+        for key, desc in PROVIDERS.items():
+            marker = " *" if key == self.settings["provider"] else ""
+            rows.append(Option(f"{desc}{marker}", id=key))
+        return rows
+
+    def _language_options(self, query: str):
+        q = query.lower()
+        rows = []
+        for code in language_display_order():
+            if q and q not in LANGUAGES[code].lower() and q not in code:
+                continue
+            cur = " *" if code == self.settings["language"] else ""
+            rows.append(Option(f"{LANGUAGES[code]} ({code})  {_lang_tag(code)}{cur}",
+                               id=code))
+        return rows or [Option("(no match)")]
+
+    def _whisper_options(self):
+        rows = []
+        for name, desc in WHISPER_MODELS.items():
+            cur = " *" if name == self.settings["whisper_model"] else ""
+            rows.append(Option(f"{name}  {desc}{cur}", id=name))
+        return rows
+
+    def _gemini_options(self):
+        candidates = [m for m, _ in GEMINI_MODELS_CANDIDATES]
+        descriptions = dict(GEMINI_MODELS_CANDIDATES)
+        self._gem_order = [m for m in self.settings["gemini_models"] if m in candidates]
+        self._gem_order += [m for m in candidates if m not in self._gem_order]
+        rows = []
+        for i, m in enumerate(self._gem_order):
+            on = m in self.settings["gemini_models"]
+            mark = "[x]" if on else "[ ]"
+            rows.append(Option(f"{i + 1}. {mark} {m}  - {descriptions.get(m, '')}",
+                               id=m))
+        return rows
+
+    def _mgr_vosk_options(self):
+        entries = models_manager.list_vosk_models()
+        if not entries:
+            return [Option("(nothing downloaded)")]
+        return [Option(f"{name}  ~{size} MB", id=str(path))
+                for name, path, size in entries]
+
+    def _mgr_whisper_options(self):
+        entries = models_manager.list_whisper_models()
+        if not entries:
+            return [Option("(nothing downloaded)")]
+        return [Option(f"{name}  ~{size} MB", id=str(path))
+                for name, path, size in entries]
+
+    def _refresh_manager(self) -> None:
+        try:
+            vosk_list = self.query_one("#mgr-vosk", OptionList)
+            vosk_list.clear_options()
+            vosk_list.add_options(self._mgr_vosk_options())
+            whisper_list = self.query_one("#mgr-whisper", OptionList)
+            whisper_list.clear_options()
+            whisper_list.add_options(self._mgr_whisper_options())
+            self.query_one("#mgr-location", Static).update(
+                Text(f"vosk: {models_manager.VOSK_DIR}\n"
+                     f"whisper: {models_manager.HF_HUB_DIR}", style=MUTED))
+        except Exception:
+            pass
+        self._refresh_strips()
+
+    # ---- navigation ------------------------------------------------------
+    def _goto(self, view: str) -> None:
+        self.current_view = view
+        self.query_one("#content", ContentSwitcher).current = view
+        self.query_one("#nav", Tree).cursor_line = VIEW_KEYS.index(view) + 1
+        focus_map = {"provider": "#provider-list", "language": "#lang-filter",
+                     "whisper": "#whisper-list", "gemini": "#gemini-list"}
+        if view in focus_map:
+            try:
+                self.query_one(focus_map[view]).focus()
+            except Exception:
+                pass
+
+    def on_tree_node_selected(self, event: Tree.NodeSelected) -> None:
+        key = event.node.data
+        if key in VIEW_KEYS:
+            self._goto(key)
+
+    def action_goto_view(self, view: str) -> None:
+        self._goto(view)
+
+    def action_focus_filter(self) -> None:
+        self._goto("language")
+        self.query_one("#lang-filter", Input).focus()
+
+    def action_help(self) -> None:
+        self.push_screen(HelpModal())
+
+    def action_save(self) -> None:
+        save_settings(self.settings)
+        try:
+            self.notify("settings stashed", title="saved")
+        except Exception:
+            pass
+        self._refresh_strips()
+
+    def action_quit_service(self) -> None:
+        self.exit(None)
+
+    # ---- home ------------------------------------------------------------
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        btn = event.button.id
+        if btn == "btn-start":
+            self.action_start()
+        elif btn == "btn-save":
+            self.action_save()
+        elif btn == "gem-toggle":
+            self._gem_toggle()
+        elif btn == "gem-up":
+            self._gem_move(-1)
+        elif btn == "gem-down":
+            self._gem_move(1)
+        elif btn == "mgr-delete":
+            self._mgr_delete()
+        elif btn == "mgr-refresh":
+            self._refresh_manager()
+        elif btn == "test-start":
+            self._start_test()
+        elif btn == "test-stop":
+            if self._test_stop is not None:
+                self._test_stop.set()
+
+    def action_start(self) -> None:
+        # auto-stash on go-live (Q1): next launch remembers this setup
+        save_settings(self.settings)
+        self.exit(self.settings)
+
+    # ---- option events ----------------------------------------------------
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        data = getattr(event.option, "id", None)
+        if data is None:
+            return
+        ol = event.option_list
+        if ol.id == "provider-list":
+            if data in PROVIDERS:
+                self.settings["provider"] = data
+                self._refresh_strips()
+                self._refresh_home()
+                try:
+                    self.notify(f"channel: {data}", title="provider")
+                except Exception:
+                    pass
+        elif ol.id == "lang-list":
+            self._select_language(data)
+        elif ol.id == "whisper-list":
+            self.settings["whisper_model"] = data
+            self._refresh_strips()
+            self._refresh_home()
+        elif ol.id == "mgr-vosk":
+            self._mgr_focus = "vosk"
+        elif ol.id == "mgr-whisper":
+            self._mgr_focus = "whisper"
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id == "lang-filter":
+            lang_list = self.query_one("#lang-list", OptionList)
+            lang_list.clear_options()
+            lang_list.add_options(self._language_options(event.value))
+
+    def _select_language(self, code: str) -> None:
+        self.settings["language"] = code
         options = vosk_model_options(code)
         if len(options) > 1:
-            tag += f" · {len(options)} models"
-        if overrides.get(code):
-            tag += f" · {overrides[code]}"
-    else:
-        tag, style = "no vosk", STYLE_TAG_BAD
-    wtag = "whisper" if whisper_supported(code) else "no whisper"
-    wstyle = STYLE_TAG_WHISPER if whisper_supported(code) else STYLE_TAG_BAD
-    return f"[{style}]{tag}[/]  [{wstyle}]{wtag}[/]"
+            self.push_screen(ModelPickModal(code, options),
+                             lambda name: self._apply_model_choice(code, name))
+        self._refresh_strips()
+        self._refresh_home()
+        try:
+            self.notify(f"tongue: {LANGUAGES.get(code, code)}", title="language")
+        except Exception:
+            pass
 
-
-def _summary_lines(settings):
-    provider = settings["provider"]
-    lines = [
-        ("Provider", provider.replace("_", " ").upper()),
-        ("Language", f"{LANGUAGES.get(settings['language'], settings['language'])} ({settings['language']})"),
-    ]
-    if provider == "whisper_local":
-        lines.append(("Whisper", settings["whisper_model"]))
-    if provider == "gemini_proxy":
-        lines.append(("Gemini chain", "\n  ".join(m.split("/")[-1] for m in settings["gemini_models"])))
-    if provider == "vosk_local":
-        override = (settings.get("vosk_model_overrides") or {}).get(settings["language"])
-        if override:
-            lines.append(("Vosk model", override))
-    return lines
-
-
-################################################################################################
-# VIEWS
-################################################################################################
-
-def _home_view(console, settings, unsaved):
-    left = Table.grid(padding=(0, 2))
-    left.add_column(style="dim", justify="right")
-    left.add_column()
-    for name, value in _summary_lines(settings):
-        left.add_row(name + ":", value)
-    if unsaved:
-        left.add_row("", "[yellow]* unsaved changes[/]")
-    vosk_count = len(models_manager.list_vosk_models())
-    whisper_count = len(models_manager.list_whisper_models())
-    left.add_row("", "")
-    left.add_row("On disk:", f"{vosk_count} vosk · {whisper_count} whisper models cached")
-
-    items = [
-        "[bold green]Start the microphone service[/]",
-        "Test transcription  (speak into your mic)",
-        "Change transcription provider",
-        "Change language",
-        "Whisper model size",
-        "Gemini voice models (fallback chain)",
-        "Manage downloaded models",
-        "Save settings",
-        "[red]Exit[/]",
-    ]
-    return left, items
-
-
-HOME_ACTIONS = ["start", "test", "provider", "language", "whisper", "gemini", "manager", "save", "exit"]
-
-
-def _pick_list(console, key_source, title, items, footer=None):
-    """Generic list picker. items: list of markup label strings.
-
-    Returns selected index, or None on escape/quit.
-    """
-    selected = 0
-    while True:
-        rows = _menu_rows(items, selected)
-        win, sel_in_win, _ = _window(rows, selected)
-        body = Table.grid(padding=(0, 1))
-        body.add_column()
-        for r in win:
-            body.add_row(r)
-        panel = Panel(
-            Group(body),
-            title=f"[{STYLE_TITLE}]{title}[/]",
-            box=box.ROUNDED,
-            border_style="blue",
-        )
-        foot = footer or _footer(("↑↓", "move"), ("Enter", "select"), ("Esc", "back"), ("q", "quit"))
-        _clear(console)
-        console.print(panel)
-        console.print(foot, justify="center")
-
-        key = get_key(key_source)
-        if key is None:
-            return None  # key stream ended (window closed)
-        if key in ("up", "k"):
-            selected = (selected - 1) % len(items)
-        elif key in ("down", "j"):
-            selected = (selected + 1) % len(items)
-        elif key in ("pgup",):
-            selected = max(0, selected - PAGE_SIZE)
-        elif key in ("pgdn",):
-            selected = min(len(items) - 1, selected + PAGE_SIZE)
-        elif key in ("home",):
-            selected = 0
-        elif key in ("end",):
-            selected = len(items) - 1
-        elif key == "enter":
-            return selected
-        elif key in ("escape", "q", "ctrl-c", "ctrl-d"):
-            return None
-
-
-def _language_picker(console, key_source, settings):
-    """Searchable language browser with engine support tags.
-
-    Mutates settings in place; returns True if language changed.
-    """
-    search = ""
-    selected = 0
-    overrides = settings.setdefault("vosk_model_overrides", {})
-    while True:
-        all_codes = language_display_order()
-        matches = [
-            c for c in all_codes
-            if search == "" or search in LANGUAGES[c].lower() or search in c
-        ]
-        if not matches:
-            matches = all_codes
-        selected = min(selected, len(matches) - 1)
-        rows = []
-        for c in matches:
-            label = f"{LANGUAGES[c]} [dim]({c})[/]"
-            if c == settings["language"]:
-                label += " [bold cyan]• current[/]"
-            rows.append(f"{label}  {_language_tag(c, overrides)}")
-
-        win, sel_in_win, start_idx = _window(
-            [Text.from_markup(r) for r in rows], selected)
-        body = Table.grid(padding=(0, 1))
-        body.add_column()
-        for r in win:
-            body.add_row(r)
-
-        search_row = Text.assemble(("Search: ", "bold"),
-                                    search if search else Text("filter by name or code...", style="dim"))
-        header = Table.grid(padding=(0, 1))
-        header.add_column()
-        header.add_row(search_row)
-        header.add_row(Rule(style="dim"))
-
-        panel = Panel(
-            Group(header, body),
-            title=f"[{STYLE_TITLE}]Language  ·  {len(matches)} of {len(all_codes)}[/]",
-            box=box.ROUNDED,
-            border_style="blue",
-        )
-        _clear(console)
-        console.print(panel)
-        console.print(_footer(("type", "filter"), ("↑↓", "move"), ("Enter", "select"),
-                                   ("Esc", "back"), ("q", "quit")), justify="center")
-
-        key = get_key(key_source)
-        if key is None:
-            return False  # stream ended
-        if key in ("up",):
-            selected = (selected - 1) % len(matches)
-        elif key in ("down",):
-            selected = (selected + 1) % len(matches)
-        elif key in ("pgup",):
-            selected = max(0, selected - PAGE_SIZE)
-        elif key in ("pgdn",):
-            selected = min(len(matches) - 1, selected + PAGE_SIZE)
-        elif key in ("home",):
-            selected = 0
-        elif key in ("end",):
-            selected = len(matches) - 1
-        elif key == "backspace":
-            search = search[:-1]
-            selected = 0
-        elif key == "enter":
-            code = matches[selected]
-            settings["language"] = code
-            options = vosk_model_options(code)
-            if len(options) > 1:
-                pick = _model_picker(console, key_source, code, overrides)
-            return True
-        elif key in ("escape",):
-            return False
-        elif key in ("q", "ctrl-c", "ctrl-d"):
-            raise SystemExit(0)
-        elif isinstance(key, str) and key.isprintable():
-            search += key
-            selected = 0
-
-
-def _model_picker(console, key_source, code, overrides):
-    """Choose between multiple vosk models for a language."""
-    options = vosk_model_options(code)
-    selected = 0
-    while True:
-        rows = []
-        for i, (name, size) in enumerate(options):
-            label = f"{name}  [dim]~{size} MB[/]"
-            if i == 0:
-                label += "  [green]latest[/]"
-            if overrides.get(code) == name:
-                label += "  [bold cyan]• current[/]"
-            rows.append(label)
-        result = _pick_list(console, key_source, f"Vosk models for {LANGUAGES[code]}", rows)
-        if result is None:
-            return None
-        i = result
-        if i == 0:
+    def _apply_model_choice(self, code: str, model_name) -> None:
+        overrides = self.settings.setdefault("vosk_model_overrides", {})
+        if model_name is None:
+            return
+        options = vosk_model_options(code)
+        if model_name == options[0][0]:
             overrides.pop(code, None)
         else:
-            overrides[code] = options[i][0]
-        return overrides.get(code)
+            overrides[code] = model_name
+        self._refresh_strips()
+        self._refresh_home()
 
+    def _refresh_home(self) -> None:
+        try:
+            self.query_one("#home-body", Static).update(self._home_body())
+        except Exception:
+            pass
 
-def _whisper_picker(console, key_source, settings):
-    from settings import WHISPER_MODELS
-    rows = []
-    for name, desc in WHISPER_MODELS.items():
-        label = f"[bold]{name}[/]  {desc}"
-        if "NOT RECOMMENDED" in desc:
-            label = f"[red]{name}[/]  {desc}"
-        marker = " [bold cyan]• current[/]" if name == settings["whisper_model"] else ""
-        rows.append(label + marker)
-    result = _pick_list(console, key_source, "Whisper model size", rows,
-                        footer=_footer(("↑↓", "move"), ("Enter", "select"), ("Esc", "back")))
-    if result is not None:
-        settings["whisper_model"] = list(WHISPER_MODELS)[result]
+    # ---- gemini chain -----------------------------------------------------
+    def _gem_highlighted(self):
+        ol = self.query_one("#gemini-list", OptionList)
+        idx = ol.highlighted
+        if idx is None or not (0 <= idx < len(self._gem_order)):
+            return None
+        return idx
 
-
-def _gemini_picker(console, key_source, settings):
-    """Multi-select with reordering for the gemini voice model chain."""
-    from settings import GEMINI_VOICE_MODES as GEMINI_VOICE_MODELS
-    candidates = [m for m, _ in GEMINI_VOICE_MODELS]
-    descriptions = dict(GEMINI_VOICE_MODELS)
-
-    order = [m for m in settings["gemini_models"] if m in candidates]
-    order += [m for m in candidates if m not in order]
-    selected = 0
-    while True:
-        rows = []
-        for i, m in enumerate(order):
-            active = m in settings["gemini_models"]
-            check = "[green]◉[/]" if active else "[dim]○[/]"
-            pos = f"[dim]{i + 1}.[/]"
-            rows.append(f"{pos} {check} [bold]{m.split('/')[-1]}[/]  [dim]{descriptions.get(m, '')}[/]")
-        rows.append("")
-        rows.append("[bold green]Done[/]")
-
-        result_rows = rows
-        win, sel_in_win, _ = _window(_menu_rows(result_rows, selected), selected)
-        body = Table.grid(padding=(0, 1))
-        body.add_column()
-        for r in win:
-            body.add_row(r)
-        panel = Panel(
-            Group(body),
-            title=f"[{STYLE_TITLE}]Gemini voice models — tried top to bottom[/]",
-            box=box.ROUNDED,
-            border_style="blue",
-        )
-        _clear(console)
-        console.print(panel)
-        console.print(_footer(("Space", "on/off"), ("u/d", "move up/down"),
-                                   ("Enter", "done"), ("Esc", "cancel")), justify="center")
-
-        key = get_key(key_source)
-        if key is None:
-            return  # stream ended
-        if key == "up":
-            selected = (selected - 1) % len(rows)
-        elif key == "down":
-            selected = (selected + 1) % len(rows)
-        elif key in ("u", "shift-up"):
-            i = selected
-            if 0 < i < len(order):
-                order[i], order[i - 1] = order[i - 1], order[i]
-                selected -= 1
-        elif key in ("d", "shift-down"):
-            i = selected
-            if i < len(order) - 1:
-                order[i], order[i + 1] = order[i + 1], order[i]
-                selected += 1
-        elif key == "space":
-            i = selected
-            if i < len(order):
-                m = order[i]
-                if m in settings["gemini_models"]:
-                    if len(settings["gemini_models"]) > 1:
-                        settings["gemini_models"].remove(m)
-                else:
-                    settings["gemini_models"].append(m)
-        elif key == "enter":
-            selected_models = [m for m in order if m in settings["gemini_models"]]
-            if selected_models:
-                settings["gemini_models"] = selected_models
-                return
-            # no selection: refuse to leave with nothing
-        elif key == "escape":
+    def _gem_toggle(self) -> None:
+        idx = self._gem_highlighted()
+        if idx is None:
             return
+        m = self._gem_order[idx]
+        chain = self.settings["gemini_models"]
+        if m in chain:
+            if len(chain) > 1:
+                chain.remove(m)
+        else:
+            chain.append(m)
+        gem_list = self.query_one("#gemini-list", OptionList)
+        gem_list.clear_options()
+        gem_list.add_options(self._gemini_options())
+        self._refresh_strips()
+        self._refresh_home()
 
+    def _gem_move(self, step: int) -> None:
+        idx = self._gem_highlighted()
+        if idx is None:
+            return
+        j = idx + step
+        if 0 <= j < len(self._gem_order):
+            self._gem_order[idx], self._gem_order[j] = self._gem_order[j], self._gem_order[idx]
+            self.settings["gemini_models"] = [
+                m for m in self._gem_order if m in self.settings["gemini_models"]]
+            gem_list = self.query_one("#gemini-list", OptionList)
+            gem_list.clear_options()
+            gem_list.add_options(self._gemini_options())
+            try:
+                gem_list.highlighted = j
+            except Exception:
+                pass
+        self._refresh_strips()
+        self._refresh_home()
 
-def _manager_view(console, key_source):
-    """Browse/delete downloaded models. Tab switches group."""
-    tab = 0  # 0 vosk, 1 whisper
-    while True:
-        entries = (models_manager.list_vosk_models() if tab == 0
+    # ---- stash / model manager ---------------------------------------------
+    def _mgr_delete(self) -> None:
+        ol_id = "#mgr-vosk" if self._mgr_focus == "vosk" else "#mgr-whisper"
+        ol = self.query_one(ol_id, OptionList)
+        idx = ol.highlighted
+        entries = (models_manager.list_vosk_models() if self._mgr_focus == "vosk"
                    else models_manager.list_whisper_models())
-        location = (models_manager.VOSK_DIR if tab == 0 else models_manager.HF_HUB_DIR)
-        rows = []
-        for name, path, size in entries:
-            rows.append(f"{name}  [dim]~{size} MB[/]")
-        if not rows:
-            rows.append("[dim](nothing downloaded)[/]")
-        rows.append("")
-        rows.append("[bold green]Back[/]")
-        selected = 0
+        if idx is None or not (0 <= idx < len(entries)):
+            try:
+                self.notify("nothing selected", severity="warning")
+            except Exception:
+                pass
+            return
+        name, path, size = entries[idx]
 
-        while True:
-            win, _, _ = _window(_menu_rows(rows, selected), selected)
-            body = Table.grid(padding=(0, 1))
-            body.add_column()
-            for r in win:
-                body.add_row(r)
-            header = Table.grid(padding=(0, 1))
-            header.add_column()
-            vosk_title = "[bold cyan]Vosk[/]" if tab == 0 else "Vosk"
-            whisper_title = "[bold cyan]Whisper (HF cache)[/]" if tab == 1 else "Whisper (HF cache)"
-            header.add_row(f"{vosk_title}   {whisper_title}")
-            header.add_row(Text(f"location: {location}", style="dim"))
-            header.add_row(Rule(style="dim"))
-            panel = Panel(
-                Group(header, body),
-                title=f"[{STYLE_TITLE}]Downloaded models[/]",
-                box=box.ROUNDED,
-                border_style="blue",
-            )
-            _clear(console)
-            console.print(panel)
-            console.print(_footer(("Tab", "switch group"), ("d", "delete"),
-                                       ("Enter", "select"), ("Esc", "back")), justify="center")
+        def _confirmed(confirmed: bool):
+            if confirmed:
+                models_manager._delete(path)
+                self._refresh_manager()
 
-            key = get_key(key_source)
-            if key is None:
-                return  # stream ended
-            if key == "tab":
-                tab = 1 - tab
-                break
-            if key == "up":
-                selected = (selected - 1) % len(rows)
-            elif key == "down":
-                selected = (selected + 1) % len(rows)
-            elif key == "d":
-                if entries and selected < len(entries):
-                    name, path, size = entries[selected]
-                    confirm_rows = ["[bold]No, keep it[/]",
-                                    f"[bold red]Yes, delete {name} (~{size} MB)[/]"]
-                    confirm = _pick_list(console, key_source, "Delete model?", confirm_rows)
-                    if confirm == 1:
-                        models_manager._delete(path)
-                    break  # refresh list
-            elif key in ("enter", "escape"):
-                if key == "enter" and selected == len(rows) - 1:
-                    return
-                if key == "escape":
-                    return
-            elif key in ("q", "ctrl-c", "ctrl-d"):
-                raise SystemExit(0)
+        self.push_screen(ConfirmModal(f"Delete {name} (~{size} MB)?"), _confirmed)
+
+    # ---- radio check (live test) --------------------------------------------
+    def _test_log(self, msg: str) -> None:
+        try:
+            box_log = self.query_one("#test-log", Static)
+            current = "" if box_log.renderable is None else str(
+                getattr(box_log.renderable, "text", box_log.renderable))
+            box_log.update(Text(current + msg + "\n", style=TEXT))
+        except Exception:
+            pass
+
+    def _set_test_running(self, running: bool) -> None:
+        try:
+            self.query_one("#test-start", Button).disabled = running
+            self.query_one("#test-stop", Button).disabled = not running
+        except Exception:
+            pass
+
+    def _start_test(self) -> None:
+        if self._test_func is None:
+            self._test_log("[WARN] test function unavailable")
+            return
+        self._test_stop = threading.Event()
+        self._set_test_running(True)
+        self._test_log(f"--- radio check: {self.settings['provider']} "
+                       f"({self.settings['language']}) ---")
+        self._run_test_worker()
+
+    @work(thread=True, group="test", exclusive=True)
+    def _run_test_worker(self) -> None:
+        stop = self._test_stop
+        test_func = self._test_func
+        settings = self.settings
+        try:
+            test_func(settings, status=lambda m: self.call_from_thread(self._test_log, m),
+                      stop_requested=(lambda: stop.is_set()) if stop else None)
+        except Exception as e:
+            self.call_from_thread(self._test_log, f"[ERROR] {e}")
+        finally:
+            self.call_from_thread(self._set_test_running, False)
+            self.call_from_thread(self._refresh_strips)
 
 
-################################################################################################
-# MAIN LOOP
-################################################################################################
+def run_tui(settings, on_test=None, **_kwargs):
+    """Run the Textual zone-comms console. Returns settings on GO LIVE.
 
-def run_tui(settings, on_test=None, console=None, key_source=None):
-    """Interactive configuration session. Mutates settings; returns them on Start."""
-    console = console or Console(highlight=False)
-    if key_source is None:
-        key_source = RealKeySource()
-
-    unsaved = False
-    selected = 0
-
-    while True:
-        left, items = _home_view(console, settings, unsaved)
-        rows = _menu_rows(items, selected)
-        right = Table.grid(padding=(0, 1))
-        right.add_column()
-        for r in rows:
-            right.add_row(r)
-
-        layout = Table.grid(padding=(1, 2))
-        layout.add_column()
-        layout.add_row(Panel(left, title="[bold]Current setup[/]",
-                             box=box.SIMPLE_HEAVY, border_style="blue"))
-        layout.add_row(Panel(right, title=f"[{STYLE_TITLE}]Main menu[/]",
-                             box=box.ROUNDED, border_style="cyan"))
-
-        _clear(console)
-        console.print(
-            Panel(layout, title=f"[{STYLE_TITLE}]TALKER Mic — Configuration[/]",
-                  box=box.DOUBLE, border_style="cyan"),
-            width=min(console.width, 76),
-        )
-        console.print(_footer(("", "move"), ("Enter", "select"), ("s", "save"),
-                                   ("q", "quit")), justify="center")
-        key = get_key(key_source)
-        if key is None:
-            raise SystemExit(0)  # stream ended: quit cleanly
-        if key == "up":
-            selected = (selected - 1) % len(items)
-        elif key == "down":
-            selected = (selected + 1) % len(items)
-        elif key == "s":
-            from settings import save_settings
-            save_settings(settings)
-            unsaved = False
-        elif key in ("q", "ctrl-c", "ctrl-d"):
-            print("Exiting without starting the microphone service.")
-            raise SystemExit(0)
-        elif key == "enter":
-            action = HOME_ACTIONS[selected]
-            if action == "start":
-                return settings
-            elif action == "save":
-                from settings import save_settings
-                save_settings(settings)
-                unsaved = False
-            elif action == "test":
-                if on_test is not None:
-                    _clear(console)
-                    try:
-                        on_test(settings)
-                    except KeyboardInterrupt:
-                        print("\nTest interrupted.")
-                    except Exception as e:
-                        print(f"Test failed: {e}")
-                    input("\nPress Enter to return to the menu...")
-            elif action == "provider":
-                from settings import PROVIDERS
-                prov_rows = [_provider_label(k, d) for k, d in PROVIDERS.items()]
-                result = _pick_list(console, key_source, "Transcription provider", prov_rows)
-                if result is not None:
-                    settings["provider"] = list(PROVIDERS)[result]
-                    unsaved = True
-            elif action == "language":
-                if _language_picker(console, key_source, settings):
-                    unsaved = True
-            elif action == "whisper":
-                _whisper_picker(console, key_source, settings)
-                unsaved = True
-            elif action == "gemini":
-                _gemini_picker(console, key_source, settings)
-                unsaved = True
-            elif action == "manager":
-                _manager_view(console, key_source)
-            elif action == "exit":
-                print("Exiting without starting the microphone service.")
-                raise SystemExit(0)
-            # after any submenu, land back on Start for a quick launch
-            selected = 0
+    Raises SystemExit(0) when the user quits without starting.
+    """
+    app = MicApp(settings, test_func=on_test)
+    result = app.run()
+    if result is None:
+        print("Exiting without starting the microphone service.")
+        raise SystemExit(0)
+    return result

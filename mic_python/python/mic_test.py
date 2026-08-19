@@ -1,6 +1,6 @@
 # mic_test.py
 # live microphone transcription test using the currently selected settings
-# used by the mic app menu ("Test transcription") and by test_voice.py
+# used by both TUIs ("Test transcription") and by test_voice.py
 
 import sys
 import time
@@ -19,42 +19,46 @@ AUDIO_FILE = "talker_test_audio.ogg"
 GRACE_SECONDS = 5
 
 
-def run_test(app_settings):
-    """Record from the mic and transcribe with the selected provider/settings."""
+def run_test(app_settings, status=None, stop_requested=None):
+    """Record from the mic and transcribe with the selected provider/settings.
+
+    status:         callable(str) receiving live progress lines (default: print)
+    stop_requested: callable() -> bool - stop recording early when it returns True
+    Returns the transcription text ('' on failure).
+    """
+    say = status or (lambda msg: print(msg))
+
     provider = app_settings["provider"]
     module = configure_provider(provider, app_settings)
     transcribe = getattr(module, "transcribe_audio_file")
 
-    print()
-    print("-" * 50)
-    print(f"Live test | provider: {provider} | language: {app_settings['language']}")
+    say(f"provider: {provider} | language: {app_settings['language']}")
     if provider == "whisper_local":
-        print(f"Whisper model: {app_settings['whisper_model']}")
+        say(f"whisper model: {app_settings['whisper_model']}")
     elif provider == "gemini_proxy":
-        print(f"Gemini chain: {' -> '.join(app_settings['gemini_models'])}")
-    print("-" * 50)
+        say(f"gemini chain: {' -> '.join(app_settings['gemini_models'])}")
 
-    print("Preparing model (downloads and caches on first use)...")
+    say("preparing model (downloads and caches on first use)...")
     if not prepare_model(app_settings):
-        print("Model/proxy not ready - transcription may fail.")
+        say("[WARN] model/proxy not ready - transcription may fail")
 
     recorder = Recorder(AUDIO_FILE)
-    print(f"Speak now (recording starts immediately, stops after ~2s of silence)...")
+    say("recording... speak now (stops after ~2s of silence)")
     t0 = time.perf_counter()
     recorder.start_recording(silence_grace_period=GRACE_SECONDS)
     while recorder.is_recording():
+        if stop_requested and stop_requested():
+            recorder.stop_recording()
+            say("stop requested - recording ended")
+            break
         time.sleep(0.1)
     record_seconds = time.perf_counter() - t0
 
-    print("Transcribing...")
+    say("transcribing...")
     t1 = time.perf_counter()
     text = transcribe(AUDIO_FILE, prompt="", lang=app_settings["language"])
     transcribe_seconds = time.perf_counter() - t1
 
-    print()
-    print(f"Recorded {record_seconds:.1f}s | transcription took {transcribe_seconds:.1f}s")
-    if text:
-        print(f"Heard: {text}")
-    else:
-        print("Heard: (nothing - empty transcription)")
-    print("-" * 50)
+    say(f"recorded {record_seconds:.1f}s | transcription took {transcribe_seconds:.1f}s")
+    say(f"heard: {text}" if text else "heard: (nothing - empty transcription)")
+    return text

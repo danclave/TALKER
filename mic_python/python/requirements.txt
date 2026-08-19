@@ -9,3 +9,4 @@ vosk
 requests
 rich
 prompt_toolkit
+textual

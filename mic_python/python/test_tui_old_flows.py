@@ -4,7 +4,7 @@ import sys
 
 from rich.console import Console
 
-import tui
+import tui_old as tui
 from settings import load_settings
 
 
