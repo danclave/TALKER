@@ -13,7 +13,8 @@ import numpy as np
 import requests
 import soundfile as sf
 
-from languages import vosk_model_info, vosk_model_url, vosk_model_is_big, LANGUAGES
+from languages import (vosk_model_options, vosk_model_by_name, vosk_model_url,
+                       VOSK_MODEL_URL, LANGUAGES)
 from vosk import KaldiRecognizer, Model as VoskModel, SetLogLevel
 
 logging.basicConfig(encoding="utf-8")
@@ -31,6 +32,17 @@ FALLBACK_LANG = "en"  # used when the selected language has no Vosk model
 
 _model = None
 _model_lang = None
+_model_overrides = {}
+
+
+def configure(model_overrides=None):
+    """Set per-language model overrides (called by main from settings)."""
+    global _model_overrides
+    if isinstance(model_overrides, dict):
+        _model_overrides = {
+            code: name for code, name in model_overrides.items()
+            if vosk_model_by_name(code, name)
+        }
 
 ################################################################################################
 # MODEL LOADING (singleton)
@@ -72,14 +84,18 @@ def get_model(lang: str = FALLBACK_LANG):
     if _model is not None and _model_lang == lang:
         return _model
 
-    use_lang = lang if vosk_model_info(lang) else FALLBACK_LANG
+    options = vosk_model_options(lang)
+    use_lang = lang if options else FALLBACK_LANG
     if use_lang != lang:
         print(f"[WARN] No Vosk model for '{lang}' "
               f"({LANGUAGES.get(lang, lang)}), falling back to English. "
               f"Consider the Whisper provider for this language.")
+        options = vosk_model_options(use_lang)
 
-    model_name, size_mb = vosk_model_info(use_lang)
-    url = vosk_model_url(use_lang)
+    # user-selected model overrides the default (first/latest) entry
+    override = vosk_model_by_name(use_lang, _model_overrides.get(use_lang, ""))
+    model_name, size_mb = override or options[0]
+    url = VOSK_MODEL_URL + model_name + ".zip"
     model_dir = _download_model(model_name, url, size_mb)
     _model = VoskModel(str(model_dir))
     _model_lang = use_lang

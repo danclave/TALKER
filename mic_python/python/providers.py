@@ -13,4 +13,6 @@ def configure_provider(provider, app_settings):
             configure(model_size=app_settings["whisper_model"])
         elif provider == "gemini_proxy":
             configure(model_chain=app_settings["gemini_models"])
+        elif provider == "vosk_local":
+            configure(model_overrides=app_settings.get("vosk_model_overrides") or {})
     return module

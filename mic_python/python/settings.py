@@ -6,7 +6,9 @@ import json
 import sys
 from pathlib import Path
 
-from languages import LANGUAGES, language_display_order, language_name, vosk_model_info, vosk_model_is_big
+from languages import (LANGUAGES, language_display_order, language_name,
+                       vosk_model_options, vosk_model_info, vosk_model_by_name,
+                       whisper_supported, VOSK_BIG_MB)
 
 ROOT_DIR = Path(getattr(sys, "frozen", False) and sys.executable or __file__).resolve().parent
 SETTINGS_FILE = ROOT_DIR / "talker_mic_settings.json"
@@ -36,6 +38,7 @@ DEFAULT_SETTINGS = {
     "language": "en",
     "whisper_model": "small",
     "gemini_models": ["gemini/gemini-3.5-flash-lite", "gemini/gemini-3.1-flash-lite"],
+    "vosk_model_overrides": {},  # language code -> chosen model name (non-default)
 }
 
 VALID_PROVIDERS = list(PROVIDERS) + ["whisper_api"]
@@ -63,6 +66,12 @@ def load_settings():
         settings["whisper_model"] = DEFAULT_SETTINGS["whisper_model"]
     if not isinstance(settings.get("gemini_models"), list) or not settings["gemini_models"]:
         settings["gemini_models"] = list(DEFAULT_SETTINGS["gemini_models"])
+    overrides = settings.get("vosk_model_overrides")
+    if not isinstance(overrides, dict):
+        overrides = {}
+    settings["vosk_model_overrides"] = {
+        code: name for code, name in overrides.items() if vosk_model_by_name(code, name)
+    }
     return settings
 
 
@@ -100,16 +109,38 @@ def _pick_from_list(entries, title):
         print("  Invalid choice.")
 
 
-def pick_language(current, vosk_hint=False):
-    """Searchable language picker. EN/RU first, then the rest alphabetical.
+def _language_label(code, current, overrides):
+    """'Russian (ru)  [current]  [vosk ~39 MB, 2 models | whisper]'"""
+    label = f"{LANGUAGES[code]} ({code})"
+    if code == current:
+        label += "  [current]"
+    info = vosk_model_info(code)
+    if info:
+        tag = f"vosk ~{info[1]} MB"
+        if info[1] >= VOSK_BIG_MB:
+            tag += ", big"
+        options = vosk_model_options(code)
+        if len(options) > 1:
+            tag += f", {len(options)} models"
+        if overrides.get(code):
+            tag += f", using {overrides[code]}"
+    else:
+        tag = "no vosk"
+    wtag = "whisper" if whisper_supported(code) else "no whisper"
+    return f"{label}  [{tag} | {wtag}]"
 
-    vosk_hint: mark languages whose Vosk model is big (slow, resource heavy).
+
+def pick_language(settings):
+    """Searchable language picker with per-language engine support tags.
+
+    Mutates settings['language'] and settings['vosk_model_overrides'] in place.
     """
-    code = current
+    current = settings["language"]
+    overrides = settings.setdefault("vosk_model_overrides", {})
     while True:
         query = _input("\n  Language search (name or code, blank = list all, '-' = back): ").lower()
         if query == "-":
-            return code
+            return
         matches = [
             c for c in language_display_order()
             if query == "" or query in LANGUAGES[c].lower() or query in c
@@ -117,21 +148,34 @@ def pick_language(current, vosk_hint=False):
         if not matches:
             print("  No language matches that search.")
             continue
-        entries = []
-        for c in matches:
-            label = f"{LANGUAGES[c]} ({c})"
-            if c == current:
-                label += "  [current]"
-            if vosk_hint and vosk_model_info(c) and vosk_model_is_big(c):
-                label += f"  [vosk: ~{vosk_model_info(c)[1]} MB, big]"
-            elif vosk_hint and not vosk_model_info(c):
-                label += "  [no vosk model -> whisper only]"
-            entries.append(label)
+        entries = [_language_label(c, current, overrides) for c in matches]
         pick = _pick_from_list(entries, f"Languages ({len(matches)} found)")
-        if pick is not None:
-            code = matches[pick]
-            print(f"  Language set to: {LANGUAGES[code]} ({code})")
-            return code
+        if pick is None:
+            continue
+        code = matches[pick]
+        current = code
+        settings["language"] = code
+        print(f"  Language set to: {LANGUAGES[code]} ({code})")
+
+        # multiple vosk models for this language -> which one?
+        options = vosk_model_options(code)
+        if len(options) > 1:
+            model_entries = []
+            for i, (name, size) in enumerate(options):
+                entry = f"{name}  (~{size} MB)"
+                if i == 0:
+                    entry += "  [latest]"
+                if overrides.get(code) == name:
+                    entry += "  [current]"
+                model_entries.append(entry)
+            mpick = _pick_from_list(model_entries, f"Vosk models for {LANGUAGES[code]}")
+            if mpick is not None:
+                if mpick == 0:
+                    overrides.pop(code, None)  # default/latest
+                    print("  Using the latest model (default).")
+                else:
+                    overrides[code] = options[mpick][0]
+                    print(f"  Vosk model set to: {overrides[code]}")
 
 
 def pick_whisper_model(current):
@@ -216,6 +260,10 @@ def _summary(settings):
         lines.append(f"  Whisper  : {settings['whisper_model']}")
     if settings["provider"] == "gemini_proxy":
         lines.append(f"  Gemini   : {' -> '.join(m.split('/')[-1] for m in settings['gemini_models'])}")
+    if settings["provider"] == "vosk_local":
+        override = (settings.get("vosk_model_overrides") or {}).get(settings["language"])
+        if override:
+            lines.append(f"  Vosk     : {override}")
     return lines
 
 
@@ -254,8 +302,7 @@ def run_menu(settings, on_test=None):
             if pick is not None:
                 settings["provider"] = list(PROVIDERS)[pick]
         elif choice == "4":
-            settings["language"] = pick_language(
-                settings["language"], vosk_hint=settings["provider"] == "vosk_local")
+            pick_language(settings)
         elif choice == "5":
             settings["whisper_model"] = pick_whisper_model(settings["whisper_model"])
         elif choice == "6":

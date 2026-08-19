@@ -88,7 +88,7 @@ If you are using a paid service (OpenAI and Openrouter support only) and prefer 
         *   **Vosk local (recommended)** - specialized model per language, light and fast (~30-140 MB per language).
         *   **Whisper local (multilingual fallback)** - 100 languages from one model, but heavier. For English only, `tiny` is enough (an English-specialized `.en` variant is used automatically). For other languages, use `small` or bigger; `medium`/`large` are too heavy for gameplay.
         *   **Gemini via the API proxy** - best quality, requires the proxy.
-    *   **Language**: always set explicitly (searchable list, English/Russian first; languages with oversized Vosk models are marked as big).
+    *   **Language**: always set explicitly (searchable list, English/Russian first). Every entry shows whether Vosk and/or Whisper support it, and Vosk model sizes - languages with several Vosk models (e.g. Russian) let you pick which one; the latest is preselected.
     *   **Whisper model size** and, for Gemini, the **voice model fallback chain**.
     Settings are saved to `talker_mic_settings.json` next to the exe and can be changed any time by simply starting the app again.
 3.  Still in the menu, you can use **"Test transcription"** to record yourself and immediately see what the selected provider hears - handy for comparing models and languages before playing.
