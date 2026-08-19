@@ -47,7 +47,15 @@ class KeySourceExhausted(Exception):
 
 
 class RealKeySource:
-    """Reads keys from the real terminal via prompt_toolkit (one long-lived stream)."""
+    """Reads keys from the real terminal via prompt_toolkit (one long-lived stream).
+
+    NOTE: on Windows, Win32Input.read_keys() is a *poll* - it returns an
+    empty list when no keys are pending instead of blocking (unlike the
+    POSIX Vt100Input). We therefore loop with a short sleep; an ended
+    stream is only signaled by read_keys() raising (stdin closed).
+    """
+
+    POLL_SECONDS = 0.02
 
     def __init__(self):
         from prompt_toolkit.input import create_input
@@ -55,15 +63,18 @@ class RealKeySource:
         self._gen = self._gen_keys()
 
     def _gen_keys(self):
+        import time
         with self._input.raw_mode():
             while True:
                 try:
-                    key_press = self._input.read_keys()
+                    key_presses = self._input.read_keys()
                 except Exception:
                     return  # stdin closed (window X / terminal gone)
-                if not key_press:
-                    return
-                yield SimpleNamespace(key=_normalize_key(key_press.key))
+                if not key_presses:
+                    time.sleep(self.POLL_SECONDS)
+                    continue
+                for key_press in key_presses:
+                    yield SimpleNamespace(key=_normalize_key(key_press.key))
 
     def keys(self):
         return self._gen
