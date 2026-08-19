@@ -688,7 +688,7 @@ class AudioSettingsModal(ModalScreen):
         super().__init__()
         self.settings = settings
         self._app = app_ref
-        self._monitor = None          # recorder.LevelMonitor, lazy import
+        self._monitor = None          # recorder.AudioMonitor, lazy import
         self._display_level = 0.0
 
     def compose(self) -> ComposeResult:
@@ -707,6 +707,22 @@ class AudioSettingsModal(ModalScreen):
             yield Static("Threshold = how loud input must be to count as "
                          "speech. The | marker on the meter IS the threshold - "
                          "bar left of it counts as silence.",
+                         classes="HelpBody")
+            with Horizontal(id="gain-row"):
+                yield Button("-", id="gain-down", classes="small")
+                yield Static("", id="gain-val")
+                yield Button("+", id="gain-up", classes="small")
+            yield Static("Mic gain boosts quiet microphones (affects "
+                         "recording AND this meter). If the status line "
+                         "flashes CLIPPING, lower it.",
+                         classes="HelpBody")
+            yield Static("HEAR YOURSELF", classes="HelpBody")
+            yield Button("", id="toggle-live")
+            yield Button("", id="toggle-playback")
+            yield Static("Live echo = hear yourself while tuning (use "
+                         "headphones - speakers feed back into the mic). "
+                         "Record & play = each radio check plays your "
+                         "recording back. Both are OFF by default.",
                          classes="HelpBody")
             yield Button("Done", id="audio-done", variant="primary")
 
@@ -735,8 +751,11 @@ class AudioSettingsModal(ModalScreen):
         if self._monitor is not None:
             return
         try:
-            from recorder import LevelMonitor
-            self._monitor = LevelMonitor(device=self.settings.get("input_device"))
+            from recorder import AudioMonitor
+            self._monitor = AudioMonitor(
+                device=self.settings.get("input_device"),
+                gain=self.settings.get("mic_gain", 1.0),
+                playback=self.settings.get("monitor_live", False))
             self._monitor.start()
         except Exception as e:
             logging.warning("live monitor unavailable: %s", e)
@@ -749,6 +768,7 @@ class AudioSettingsModal(ModalScreen):
 
     def _meter_tick(self) -> None:
         level = self._monitor.get_level() if self._monitor else None
+        clipping = bool(self._monitor and self._monitor.is_clipping())
         if level is not None:
             self._display_level = level
         try:
@@ -762,11 +782,14 @@ class AudioSettingsModal(ModalScreen):
             elif level is None and self._monitor is None:
                 status.update(Text("monitor unavailable", style=MUTED))
             else:
-                status.update(Text.assemble(
+                parts = [
                     (f"level {int(self._display_level):4d}", TEXT),
                     (f"  threshold {threshold}", "dim"),
                     ("  SPEECH", ACCENT) if speaking else ("  silence", AMBER),
-                ))
+                ]
+                if clipping:
+                    parts.append(("  CLIPPING - lower the gain!", BAD))
+                status.update(Text.assemble(*parts))
         except Exception:
             pass
 
@@ -806,6 +829,14 @@ class AudioSettingsModal(ModalScreen):
         try:
             self.query_one("#thr-val", Static).update(
                 f"threshold {self.settings.get('silence_level', 1000)}")
+            self.query_one("#gain-val", Static).update(
+                f"gain {self.settings.get('mic_gain', 1.0):.1f}x")
+            self.query_one("#toggle-live", Button).label = (
+                "Live echo (hear yourself, delayed): "
+                + ("ON" if self.settings.get("monitor_live") else "OFF"))
+            self.query_one("#toggle-playback", Button).label = (
+                "Record & play back after each check: "
+                + ("ON" if self.settings.get("playback_after") else "OFF"))
         except Exception:
             pass
 
@@ -824,6 +855,17 @@ class AudioSettingsModal(ModalScreen):
         self._stop_monitor()
         self._ensure_monitor()
 
+    def _apply_gain(self, delta: float) -> None:
+        current = float(self.settings.get("mic_gain", 1.0))
+        new = round(max(0.5, min(4.0, current + delta)) * 2) / 2  # 0.5 steps
+        if new == current:
+            return
+        self.settings["mic_gain"] = new
+        self._refresh()
+        # gain applies to the live monitor immediately (restart it)
+        self._stop_monitor()
+        self._ensure_monitor()
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         bid = event.button.id
         if bid == "thr-down":
@@ -833,6 +875,20 @@ class AudioSettingsModal(ModalScreen):
         elif bid == "thr-up":
             current = int(self.settings.get("silence_level", 1000))
             self.settings["silence_level"] = min(8000, current + 250)
+            self._refresh()
+        elif bid == "gain-down":
+            self._apply_gain(-0.5)
+        elif bid == "gain-up":
+            self._apply_gain(+0.5)
+        elif bid == "toggle-live":
+            enabled = not self.settings.get("monitor_live", False)
+            self.settings["monitor_live"] = enabled
+            self._refresh()
+            if self._monitor is not None:
+                self._monitor.set_playback(enabled)  # applies live
+        elif bid == "toggle-playback":
+            self.settings["playback_after"] = not self.settings.get(
+                "playback_after", False)
             self._refresh()
         elif bid == "audio-done":
             self._stop_monitor()
@@ -1099,6 +1155,8 @@ class MicApp(App):
                                              variant="primary")
                                 yield Button("Stop recording", id="test-stop",
                                              variant="warning", disabled=True)
+                                yield Button("Play last recording", id="test-play",
+                                             disabled=True)
                                 yield Button("Audio settings...", id="audio-open")
                         with VerticalScroll(id="provider", classes="pane"):
                             yield Static("Provider", classes="pane-title")
@@ -1554,17 +1612,22 @@ class MicApp(App):
         marked = Text.assemble(t[:10], ("|", RUST), t[10:]) if len(t) >= 10 else t
         return marked
 
-    def _meter_update(self, pct: int, silence_remaining, elapsed: float) -> None:
+    def _meter_update(self, pct: int, silence_remaining, elapsed: float,
+                      clipping: bool = False) -> None:
         try:
             self._ui("#meter", Static).update(self._meter_render(pct))
             status = self._ui("#meter-status", Static)
             if silence_remaining is not None:
                 status.update(Text.assemble(
                     (f"{elapsed:4.1f}s", "dim"),
-                    (f"  silence auto-stop in {silence_remaining:.1f}s", AMBER)))
+                    (f"  silence auto-stop in {silence_remaining:.1f}s", AMBER),
+                    ("  CLIPPING - lower gain!" if clipping else "", BAD)))
             else:
-                status.update(Text.assemble((f"{elapsed:4.1f}s", "dim"),
-                                            ("  live", ACCENT)))
+                status.update(Text.assemble(
+                    (f"{elapsed:4.1f}s", "dim"),
+                    ("  waiting for speech...", MUTED) if pct == 0 and elapsed > 1
+                    else ("  live", ACCENT),
+                    ("  CLIPPING - lower gain!" if clipping else "", BAD)))
         except Exception:
             pass
 
@@ -1688,6 +1751,8 @@ class MicApp(App):
         elif btn == "test-stop":
             if self._test_stop is not None:
                 self._test_stop.set()
+        elif btn == "test-play":
+            self._play_last_recording()
 
     # ---- popup result handlers
     def _apply_provider_pick(self, key) -> None:
@@ -2143,6 +2208,22 @@ class MicApp(App):
         except Exception:
             pass
 
+    def _play_last_recording(self) -> None:
+        """Play the last radio-check recording (talker_test_audio.ogg)."""
+        import threading as _threading
+        try:
+            from pathlib import Path
+            from recorder import play_audio_file
+            path = Path("talker_test_audio.ogg")
+            if not path.exists():
+                self._test_log("[WARN] no recording yet - run a radio check first")
+                return
+            self._test_log("playing back your last recording...")
+            _threading.Thread(target=play_audio_file, args=(str(path),),
+                              daemon=True).start()
+        except Exception as e:
+            self._test_log(f"[ERROR] playback failed: {e}")
+
     def _start_test(self) -> None:
         if self._test_func is None:
             self._test_log("[WARN] test function unavailable")
@@ -2167,9 +2248,9 @@ class MicApp(App):
                 self.call_from_thread(setattr, self, "recording", active)
             kwargs["on_recording"] = _on_recording
         if "on_level" in params:
-            def _on_level(pct, silence_remaining, elapsed):
+            def _on_level(pct, silence_remaining, elapsed, clipping=False):
                 self.call_from_thread(self._meter_update, pct,
-                                      silence_remaining, elapsed)
+                                      silence_remaining, elapsed, clipping)
             kwargs["on_level"] = _on_level
 
         def _report(message, current, total):
@@ -2197,6 +2278,11 @@ class MicApp(App):
             self.call_from_thread(self._set_test_running, False)
             self.call_from_thread(setattr, self, "recording", False)
             self.call_from_thread(self._refresh_dashboard)
+            # play-back button becomes usable once a recording exists
+            from pathlib import Path
+            if Path("talker_test_audio.ogg").exists():
+                self.call_from_thread(
+                    lambda: setattr(self._ui("#test-play", Button), "disabled", False))
 
     # =======================================================================
     # DIAGNOSTICS LOG PANE

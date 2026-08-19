@@ -462,6 +462,45 @@ async def flow_boot_timing():
     print("FLOW 12 OK: loading screen paints + eased fill completes")
 
 
+async def flow_audio_modal_gain_and_playback():
+    st2 = fresh()
+    app = MicApp(st2)
+    async with app.run_test(size=(110, 32)) as pilot:
+        assert await boot(app, pilot)
+        await pilot.press("2")
+        await pilot.click("#audio-open")
+        await pilot.pause()
+        modal = app.screen
+        assert type(modal).__name__ == "AudioSettingsModal"
+        # gain: 1.0 -> 3.0 via three + presses (0.5 steps)
+        for _ in range(4):        # clamp check: 1.0+4*0.5=3.0 valid
+            modal.query_one("#gain-up").press()
+            await pilot.pause(0.05)
+        assert st2["mic_gain"] == 3.0, st2["mic_gain"]
+        modal.query_one("#gain-down").press()
+        await pilot.pause(0.05)
+        assert st2["mic_gain"] == 2.5, st2["mic_gain"]
+        gain_label = str(modal.query_one("#gain-val").render())
+        assert "2.5" in gain_label, gain_label
+        # toggles flip labels and settings, off by default
+        assert st2["monitor_live"] is False and st2["playback_after"] is False
+        modal.query_one("#toggle-live").press()
+        modal.query_one("#toggle-playback").press()
+        await pilot.pause(0.1)
+        assert st2["monitor_live"] is True and st2["playback_after"] is True
+        live_label = str(modal.query_one("#toggle-live").render())
+        assert "ON" in live_label, live_label
+        modal.query_one("#toggle-live").press()
+        await pilot.pause(0.05)
+        assert st2["monitor_live"] is False
+        modal.query_one("#audio-done").press()
+        await pilot.pause(0.3)
+        assert type(app.screen).__name__ != "AudioSettingsModal"
+        # play-last button exists and stays disabled without a recording
+        assert app.query_one("#test-play").disabled
+    print("FLOW 13 OK: audio modal gain + hear-yourself toggles + play button")
+
+
 async def flow_progress_reporting():
     st = fresh()
     app = MicApp(st)
@@ -491,6 +530,7 @@ async def main():
     await flow_log_pane()
     await flow_wizard_audio_and_details()
     await flow_boot_timing()
+    await flow_audio_modal_gain_and_playback()
     await flow_progress_reporting()
     # start-autosave last: exits the app
     import settings as settings_module

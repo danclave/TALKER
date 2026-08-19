@@ -61,8 +61,11 @@ def run_test(app_settings, status=None, stop_requested=None, on_recording=None,
     silence_level = app_settings.get("silence_level", 1000)
     recorder = Recorder(AUDIO_FILE,
                         silence_level=silence_level,
-                        device=app_settings.get("input_device"))
-    say("recording... speak now (stops after ~2s of silence)")
+                        device=app_settings.get("input_device"),
+                        gain=app_settings.get("mic_gain", 1.0))
+    say("recording... speak now")
+    say("(silence countdown starts as soon as you stop talking; stops "
+        "itself if you never speak)")
     if on_recording:
         on_recording(True)
     t0 = time.perf_counter()
@@ -75,11 +78,14 @@ def run_test(app_settings, status=None, stop_requested=None, on_recording=None,
             # normalize: silence threshold sits at 50% of the meter
             pct = min(100, int(100 * level / max(1, silence_level * 2)))
             remaining = recorder.get_silence_remaining()
-            on_level(pct, remaining, time.perf_counter() - t0)
+            clip = recorder.is_clipping()
+            on_level(pct, remaining, time.perf_counter() - t0, clip)
         except Exception:
             pass
 
-    recorder.start_recording(silence_grace_period=GRACE_SECONDS)
+    # first-speech arming: silence before you speak never counts toward the
+    # auto-stop countdown; if you never speak, it stops after 10s total
+    recorder.start_recording(arm_on_speech=True, no_speech_timeout=10.0)
     try:
         while recorder.is_recording():
             _tick()
@@ -93,6 +99,12 @@ def run_test(app_settings, status=None, stop_requested=None, on_recording=None,
         if on_recording:
             on_recording(False)
     record_seconds = time.perf_counter() - t0
+
+    # optional: play the recording back (parallel with transcription)
+    if app_settings.get("playback_after"):
+        from recorder import play_audio_file
+        play_audio_file(AUDIO_FILE)
+        say("playing back your recording...")
 
     say("transcribing...")
     t1 = time.perf_counter()

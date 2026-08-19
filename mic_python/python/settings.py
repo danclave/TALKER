@@ -43,6 +43,9 @@ DEFAULT_SETTINGS = {
     "vosk_model_overrides": {},  # language code -> chosen model name (non-default)
     "input_device": None,  # microphone device index (None = system default)
     "silence_level": 1000,  # mic level below this counts as silence
+    "mic_gain": 1.0,        # software gain multiplier (0.5 - 4.0)
+    "monitor_live": False,  # hear yourself live (delayed) in the audio monitor
+    "playback_after": False,  # play the recording back after each radio check
 }
 
 VALID_PROVIDERS = list(PROVIDERS) + ["whisper_api"]
@@ -79,6 +82,12 @@ def load_settings():
         settings["silence_level"] = max(100, min(8000, int(settings.get("silence_level", 1000))))
     except (TypeError, ValueError):
         settings["silence_level"] = 1000
+    try:
+        settings["mic_gain"] = max(0.5, min(4.0, float(settings.get("mic_gain", 1.0))))
+    except (TypeError, ValueError):
+        settings["mic_gain"] = 1.0
+    settings["monitor_live"] = bool(settings.get("monitor_live", False))
+    settings["playback_after"] = bool(settings.get("playback_after", False))
     overrides = settings.get("vosk_model_overrides")
     if not isinstance(overrides, dict):
         overrides = {}
