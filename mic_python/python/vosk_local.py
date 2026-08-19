@@ -70,7 +70,7 @@ def _download_model(model_name: str, url: str, size_mb: int) -> Path:
     _report(f"downloading vosk model '{model_name}' (~{size_mb} MB, one time)...",
             0, size_mb)
     if size_mb >= 150:
-        print("[WARN] This is a large model - it will use more resources and be slow.")
+        logging.warning("This is a large vosk model - it will use more resources and be slow.")
     try:
         response = requests.get(url, stream=True, timeout=120)
         response.raise_for_status()
@@ -89,16 +89,16 @@ def _download_model(model_name: str, url: str, size_mb: int) -> Path:
         zip_bytes = b"".join(zip_chunks)
         _report(f"downloaded {round(done / 1048576, 1)} MB - extracting...", None, None)
     except Exception as e:
-        print(f"[ERROR] Model download failed: {e}")
-        print(f"-> Check your internet connection, or download manually from {url}")
+        logging.error("Vosk model download failed: %s", e)
+        logging.error("Check your internet connection, or download manually from %s", url)
         raise
 
-    print("Extracting model...")
+    logging.info("Extracting vosk model...")
     try:
         with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
             zf.extractall(MODELS_DIR)
     except Exception as e:
-        print(f"[ERROR] Model extraction failed: {e}")
+        logging.error("Vosk model extraction failed: %s", e)
         raise
     if not target_dir.is_dir():
         raise RuntimeError(f"Unexpected model archive layout in {MODELS_DIR}")
@@ -113,9 +113,9 @@ def get_model(lang: str = FALLBACK_LANG):
     options = vosk_model_options(lang)
     use_lang = lang if options else FALLBACK_LANG
     if use_lang != lang:
-        print(f"[WARN] No Vosk model for '{lang}' "
-              f"({LANGUAGES.get(lang, lang)}), falling back to English. "
-              f"Consider the Whisper provider for this language.")
+        logging.warning("No Vosk model for '%s' (%s), falling back to English. "
+                        "Consider the Whisper provider for this language.",
+                        lang, LANGUAGES.get(lang, lang))
         options = vosk_model_options(use_lang)
 
     # user-selected model overrides the default (first/latest) entry
@@ -125,7 +125,7 @@ def get_model(lang: str = FALLBACK_LANG):
     model_dir = _download_model(model_name, url, size_mb)
     _model = VoskModel(str(model_dir))
     _model_lang = use_lang
-    print(f"[OK] Vosk model '{model_name}' loaded.")
+    logging.info("Vosk model '%s' loaded.", model_name)
     return _model
 
 
@@ -175,7 +175,7 @@ def transcribe_audio_file(audio_path: str,
         final = json.loads(recognizer.FinalResult())
 
         text = final.get("text", "").strip()
-        print(f"Transcription from {_model_lang}: {text}")
+        logging.info("Transcription from %s: %s", _model_lang, text)
 
         if out_path:
             Path(out_path).write_text(text, encoding="utf-8")
@@ -198,8 +198,8 @@ def test_transcription_service():
     try:
         get_model(FALLBACK_LANG)
     except Exception as e:
-        print(f"[ERROR] Vosk unavailable: {e}")
-        print("-> Try: pip install vosk")
+        logging.error("Vosk unavailable: %s", e)
+        logging.error("Try: pip install vosk")
 
 
 def ask_gpt(question: str, model: str) -> str:

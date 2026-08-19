@@ -28,15 +28,21 @@ for _stream in (sys.stdout, sys.stderr):
 # CONFIG
 ####################################################################################################
 
-# Configure logging
+# Logging: file always; console handler is added only for non-TUI modes
+# (in the TUI, diagnostics go to the in-app LOG pane instead - F12).
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
-        logging.StreamHandler(sys.stdout),              # console
-        logging.FileHandler("talker.log", encoding="utf-8")  # persistent log
+        logging.FileHandler("talker.log", encoding="utf-8"),  # persistent log
     ],
 )
+
+
+def _enable_console_logging():
+    console = logging.StreamHandler(sys.stdout)
+    console.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+    logging.getLogger().addHandler(console)
 
 # Get the system's temporary directory
 TEMP_DIR = tempfile.gettempdir()
@@ -77,6 +83,9 @@ def resolve_startup_config():
                 app_settings["whisper_model"] = sys.argv[2]
             elif app_settings["provider"] == "gemini_proxy":
                 app_settings["gemini_models"] = [sys.argv[2]]
+            elif app_settings["provider"] == "custom_proxy":
+                app_settings["custom_models"] = [sys.argv[2]]
+        _enable_console_logging()  # CLI users get console diagnostics
         return app_settings
 
     # Full TUI for interactive terminals; plain menu fallback for piped stdin.
@@ -85,10 +94,12 @@ def resolve_startup_config():
             import tui
         except Exception as e:
             print(f"[WARN] TUI unavailable ({e}), falling back to the plain menu.")
+            _enable_console_logging()
         else:
             app_settings = tui.run_tui(app_settings, on_test=mic_test.run_test)
             return app_settings
 
+    _enable_console_logging()
     app_settings, _ = settings_module.run_menu(app_settings, on_test=mic_test.run_test)
     return app_settings
 

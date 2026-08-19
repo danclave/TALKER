@@ -91,17 +91,17 @@ def get_model(lang=None):
                 0, _SIZE_HINTS_MB[name])
     else:
         _report(f"loading whisper '{label}'...", None, None)
-    print(f"Loading faster-whisper model '{label}' (first run downloads it)...")
+    logging.info("Loading faster-whisper model '%s' (first run downloads it)...", label)
     try:
         model = WhisperModel(name, compute_type="int8", device="cpu")
     except Exception as e:
-        print(f"[ERROR] Failed to load model '{name}': {e}")
-        print("-> Check your internet connection (models download once from Hugging Face)")
-        print("-> or try a smaller model size in the mic app menu")
+        logging.error("Failed to load whisper model '%s': %s", name, e)
+        logging.error("Check your internet connection (models download once from Hugging Face)")
+        logging.error("or try a smaller model size in the mic app menu")
         raise
     _models[name] = model
     _report(f"whisper '{name}' ready", None, None)
-    print(f"[OK] faster-whisper '{name}' loaded.")
+    logging.info("faster-whisper '%s' loaded.", name)
     return model
 
 
@@ -147,7 +147,7 @@ def transcribe_audio_file(audio_path: str,
         text = ""
 
     detected = getattr(info, "language", None) if lang is None else lang
-    print(f"Transcription from {detected}: {text}")
+    logging.info("Transcription from %s: %s", detected, text)
 
     if out_path:
         Path(out_path).write_text(text, encoding="utf-8")
@@ -171,8 +171,8 @@ def test_transcription_service():
     try:
         get_model()
     except Exception as e:
-        print(f"[ERROR] Local whisper unavailable: {e}")
-        print("-> Try: pip install faster-whisper")
+        logging.error("Local whisper unavailable: %s", e)
+        logging.error("Try: pip install faster-whisper")
 
 
 ################################################################################################

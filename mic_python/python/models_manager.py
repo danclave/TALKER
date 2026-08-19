@@ -11,6 +11,23 @@ ROOT_DIR = Path(getattr(sys, "frozen", False) and sys.executable or __file__).re
 VOSK_DIR = ROOT_DIR / "vosk_models"
 HF_HUB_DIR = Path.home() / ".cache" / "huggingface" / "hub"
 
+# hugging face repo owners for each faster-whisper model name
+WHISPER_REPOS = {
+    "tiny": "Systran", "tiny.en": "Systran",
+    "base": "Systran", "base.en": "Systran",
+    "small": "Systran", "small.en": "Systran",
+    "medium": "Systran", "medium.en": "Systran",
+    "large-v3-turbo": "mobiuslabsgmbh",
+}
+
+
+def whisper_model_cached(name):
+    """True when the given faster-whisper model is present in the HF cache."""
+    repo = WHISPER_REPOS.get(name)
+    if not repo:
+        return False
+    return (HF_HUB_DIR / f"models--{repo}--faster-whisper-{name}").is_dir()
+
 VOSK_REPOS = "https://alphacephei.com/vosk/models/"
 HF_INFO = "https://huggingface.co/Systran"
 

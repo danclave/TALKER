@@ -1,3 +1,5 @@
+import logging
+
 import sounddevice as sd
 import soundfile as sf
 import numpy as np
@@ -41,7 +43,7 @@ class Recorder:
         """
         with self._lock:
             if self._recording:
-                print("Already recording.")
+                logging.info("Already recording.")
                 return
             self._recording = True
             self._audio_frames = []
@@ -53,7 +55,7 @@ class Recorder:
                                           dtype=self._dtype,
                                           callback=self._audio_callback)
             self._stream.start()
-            print("Recording started.")
+            logging.info("Recording started.")
 
         # Start a thread to monitor silence and stop recording
         threading.Thread(target=self._monitor_silence, args=(silence_grace_period,), daemon=True).start()
@@ -64,7 +66,7 @@ class Recorder:
         """
         with self._lock:
             if not self._recording:
-                print("Not currently recording.")
+                logging.info("Not currently recording.")
                 return
             self._recording = False
             if self._stream:
@@ -73,7 +75,7 @@ class Recorder:
                 self._stream = None
 
             self._save_audio()
-            print("Recording stopped due to silence.")
+            logging.info("Recording stopped due to silence.")
             # print("Recording stopped and audio saved to:", self.output_file)
 
     def is_recording(self):
@@ -88,7 +90,7 @@ class Recorder:
         Callback function for the InputStream.
         """
         if status:
-            print(f"Stream status: {status}")
+            logging.debug("Stream status: %s", status)
 
         audio_data = indata.copy()
         self._audio_frames.append(audio_data)
@@ -133,7 +135,7 @@ class Recorder:
         Saves the recorded audio to the output file in OGG format.
         """
         if not self._audio_frames:
-            print("No audio captured - nothing to save.")
+            logging.warning("No audio captured - nothing to save.")
             return
         # Concatenate all frames
         audio_data = np.concatenate(self._audio_frames, axis=0)

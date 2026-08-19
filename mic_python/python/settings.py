@@ -16,14 +16,15 @@ SETTINGS_FILE = ROOT_DIR / "talker_mic_settings.json"
 # Selectable providers in the menu (whisper_api stays CLI-only for compatibility)
 PROVIDERS = {
     "whisper_local": "Whisper local  - RECOMMENDED: best offline accuracy, 100 languages",
-    "gemini_proxy":  "Gemini proxy   - best quality overall, requires the API proxy",
-    "vosk_local":    "Vosk local     - ultra-light fallback for weak systems; noticeably lower accuracy on real mic audio",
+    "gemini_proxy":  "Gemini proxy   - best quality; needs the API proxy with Gemini API key(s)",
+    "custom_proxy":  "Custom models  - advanced: any audio-capable model on your proxy (provider/modelname)",
+    "vosk_local":    "Vosk local     - weak-systems fallback; noticeably lower accuracy",
 }
 
 WHISPER_MODELS = {
-    "tiny":            "tiny            ~75 MB   English: great (auto .en variant). Multilingual: weak",
-    "base":            "base            ~145 MB  light all-rounder; non-English accuracy mediocre",
-    "small":           "small           ~490 MB  minimum for good multilingual; ~700 MB RAM, ~3 s/clip",
+    "tiny":            "tiny            ~75 MB   LAST RESORT - only if you can't run better; noticeably worse even on English",
+    "base":            "base            ~145 MB  solid for English; passable multilingual",
+    "small":           "small           ~490 MB  RECOMMENDED - best accuracy, any language. Fine on any PC from the last decade",
     "medium":          "medium          ~1.5 GB  NOT RECOMMENDED - too heavy and slow for gameplay",
     "large-v3-turbo":  "large-v3-turbo  ~1.6 GB  NOT RECOMMENDED - too heavy and slow for gameplay",
 }
@@ -38,11 +39,11 @@ DEFAULT_SETTINGS = {
     "language": "en",
     "whisper_model": "small",
     "gemini_models": ["gemini/gemini-3.5-flash-lite", "gemini/gemini-3.1-flash-lite"],
+    "custom_models": [],  # user-defined chain for the custom provider
     "vosk_model_overrides": {},  # language code -> chosen model name (non-default)
 }
 
 VALID_PROVIDERS = list(PROVIDERS) + ["whisper_api"]
-
 
 ################################################################################################
 # LOAD / SAVE
@@ -66,6 +67,10 @@ def load_settings():
         settings["whisper_model"] = DEFAULT_SETTINGS["whisper_model"]
     if not isinstance(settings.get("gemini_models"), list) or not settings["gemini_models"]:
         settings["gemini_models"] = list(DEFAULT_SETTINGS["gemini_models"])
+    custom = settings.get("custom_models")
+    if not isinstance(custom, list):
+        custom = []
+    settings["custom_models"] = [m for m in custom if isinstance(m, str) and m.strip()]
     overrides = settings.get("vosk_model_overrides")
     if not isinstance(overrides, dict):
         overrides = {}

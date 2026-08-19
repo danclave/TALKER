@@ -11,8 +11,9 @@ def configure_provider(provider, app_settings, progress=None):
     if configure:
         if provider == "whisper_local":
             configure(model_size=app_settings["whisper_model"], progress=progress)
-        elif provider == "gemini_proxy":
-            configure(model_chain=app_settings["gemini_models"])
+        elif provider in ("gemini_proxy", "custom_proxy"):
+            key = "custom_models" if provider == "custom_proxy" else "gemini_models"
+            configure(model_chain=app_settings.get(key) or [])
         elif provider == "vosk_local":
             configure(model_overrides=app_settings.get("vosk_model_overrides") or {},
                       progress=progress)
@@ -36,15 +37,15 @@ def prepare_model(app_settings, report=None):
             import whisper_local
             whisper_local.configure(progress=report)
             whisper_local.get_model(lang)
-        elif provider == "gemini_proxy":
-            import requests
-            from gemini_proxy import PROXY_URL, PROXY_API_KEY
-            base = PROXY_URL.rsplit("/v1/", 1)[0]
-            requests.get(base + "/v1/models",
-                         headers={"Authorization": f"Bearer {PROXY_API_KEY}"},
-                         timeout=10).raise_for_status()
-            if report:
-                report("proxy reachable", None, None)
+        elif provider in ("gemini_proxy", "custom_proxy"):
+            import proxy_common
+            if proxy_common.check_proxy():
+                if report:
+                    report("proxy reachable", None, None)
+            else:
+                if report:
+                    report("proxy NOT reachable - is it running?", None, None)
+                return False
         return True
     except Exception as e:
         print(f"[WARN] Could not prepare {provider}: {e}")
