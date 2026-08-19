@@ -18,7 +18,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.reactive import reactive
 from textual.screen import ModalScreen
 from textual.widgets import (
-    Button, ContentSwitcher, Footer, Header, Input, Label, OptionList, Static, Tree,
+    Button, ContentSwitcher, Footer, Header, Input, Label, OptionList, RichLog, Static, Tree,
 )
 from textual.widgets.option_list import Option
 
@@ -107,7 +107,7 @@ ContentSwitcher {{
 }}
 .pane {{ height: 1fr; }}
 Static.hint, Label.hint {{ color: {MUTED}; margin-bottom: 1; }}
-Static.logbox {{
+.logbox {{
     border: round {BORDER};
     padding: 1;
     height: 1fr;
@@ -290,7 +290,12 @@ class MicApp(App):
                                          id="btn-start", variant="primary")
                             yield Button("Save settings", id="btn-save")
                     with Vertical(id="test", classes="pane"):
-                        yield Static("", id="test-log", classes="logbox")
+                        yield Label("Radio check - tests your mic + model with the "
+                                    "current settings", classes="hint")
+                        yield Label("Press Start, then speak. Recording stops after "
+                                    "~2s of silence - or press Stop.", classes="hint")
+                        yield RichLog(id="test-log", classes="logbox", wrap=True,
+                                      markup=False, max_lines=500)
                         with Horizontal():
                             yield Button("Start radio check", id="test-start",
                                          variant="primary")
@@ -652,10 +657,7 @@ class MicApp(App):
     # ---- radio check (live test) --------------------------------------------
     def _test_log(self, msg: str) -> None:
         try:
-            box_log = self.query_one("#test-log", Static)
-            current = "" if box_log.renderable is None else str(
-                getattr(box_log.renderable, "text", box_log.renderable))
-            box_log.update(Text(current + msg + "\n", style=TEXT))
+            self.query_one("#test-log", RichLog).write(msg)
         except Exception:
             pass
 

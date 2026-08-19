@@ -81,10 +81,48 @@ def models_manager_list():
     return models_manager.list_vosk_models()
 
 
+async def flow_radio_check():
+    """RADIO CHECK pane: log lines must appear (RichLog) and Stop must work."""
+    import time as _time
+
+    def slow_test(settings, status=None, stop_requested=None):
+        say = status or print
+        say("recording... speak now (stops after ~2s of silence)")
+        for _ in range(100):  # wait until Stop is pressed (max 10s)
+            if stop_requested and stop_requested():
+                say("stop requested - recording ended")
+                return ""
+            _time.sleep(0.1)
+        return ""
+
+    st = fresh()
+    app = MicApp(st, test_func=slow_test)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.press("2")
+        assert app.current_view == "test"
+        app._start_test()
+        await pilot.pause(0.5)
+        # buttons: running state
+        assert app.query_one("#test-start").disabled
+        assert not app.query_one("#test-stop").disabled
+        from textual.widgets import RichLog
+        log = app.query_one("#test-log", RichLog)
+        assert any("speak now" in getattr(strip, "text", "") for strip in log.lines), \
+            "instructions must be visible in the log"
+        # press Stop -> worker finishes -> buttons reset
+        await pilot.click("#test-stop")
+        await pilot.pause(1.0)
+        assert not app.query_one("#test-start").disabled
+        assert app.query_one("#test-stop").disabled
+        assert any("stop requested" in getattr(strip, "text", "") for strip in log.lines)
+    print("TEXTUAL FLOW 5 OK: radio check logs + stop button")
+
+
 async def main():
     await flow_language()
     await flow_gemini()
     await flow_manager_delete_cancel()
+    await flow_radio_check()
     # flow 3 last: it exits the app via button
     import settings as settings_module
     from pathlib import Path
