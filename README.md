@@ -83,7 +83,7 @@ If you are using a paid service (OpenAI and Openrouter support only) and prefer 
 
 ### Step 3: Launch and Play
 1.  If you are using the API Proxy (Option A), make sure `proxy_app.exe` is running.
-2.  If you plan to use voice chat, run `talker_mic.exe` (Windows) or `./talker_mic` (Linux/macOS). A configuration menu opens where you pick:
+2.  If you plan to use voice chat, run `talker_mic.exe` (Windows) or `./talker_mic` (Linux/macOS). An interactive menu (arrow keys, type-to-search) opens where you pick:
     *   **Transcription provider**:
         *   **Vosk local (recommended)** - specialized model per language, light and fast (~30-140 MB per language).
         *   **Whisper local (multilingual fallback)** - 100 languages from one model, but heavier. For English only, `tiny` is enough (an English-specialized `.en` variant is used automatically). For other languages, use `small` or bigger; `medium`/`large` are too heavy for gameplay.

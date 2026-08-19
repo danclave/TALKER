@@ -11,7 +11,7 @@ from watchdog.observers import Observer
 from files import read_file, write_to_file
 from recorder import Recorder
 from banner import print_banner
-from providers import configure_provider
+from providers import configure_provider, prepare_model
 import mic_test
 
 import settings as settings_module
@@ -79,6 +79,12 @@ def resolve_startup_config():
                 app_settings["gemini_models"] = [sys.argv[2]]
         return app_settings
 
+    # Full TUI for interactive terminals; plain menu fallback for piped stdin.
+    if sys.stdin.isatty() and sys.stdout.isatty():
+        import tui
+        app_settings = tui.run_tui(app_settings, on_test=mic_test.run_test)
+        return app_settings
+
     app_settings, _ = settings_module.run_menu(app_settings, on_test=mic_test.run_test)
     return app_settings
 
@@ -102,6 +108,9 @@ def main():
         load_api_key = getattr(transcription_module, "load_openai_api_key")
         transcribe_audio_file_func = getattr(transcription_module, "transcribe_audio_file")
         load_api_key()
+        # download/cache the selected model up front so the first in-game
+        # use does not stall on a download
+        prepare_model(app_settings)
         recorder = Recorder(AUDIO_FILE)
         Path(COMMAND_FILE).touch()
 

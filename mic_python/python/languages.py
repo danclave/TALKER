@@ -114,8 +114,8 @@ LANGUAGES = {
     "ky": "Kyrgyz",
 }
 
-# Menu display order: English and Russian first, everything else alphabetical by name.
-_PRIORITY = ["en", "ru"]
+# Menu display order: pinned languages first, everything else alphabetical by name.
+_PRIORITY = ["en", "en-gb", "ru", "uk", "pl", "es"]
 
 
 def language_display_order():

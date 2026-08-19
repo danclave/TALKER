@@ -7,3 +7,5 @@ httpx
 faster-whisper
 vosk
 requests
+rich
+prompt_toolkit

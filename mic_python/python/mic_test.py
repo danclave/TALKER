@@ -13,7 +13,7 @@ for _stream in (sys.stdout, sys.stderr):
         pass
 
 from recorder import Recorder
-from providers import configure_provider
+from providers import configure_provider, prepare_model
 
 AUDIO_FILE = "talker_test_audio.ogg"
 GRACE_SECONDS = 5
@@ -33,6 +33,10 @@ def run_test(app_settings):
     elif provider == "gemini_proxy":
         print(f"Gemini chain: {' -> '.join(app_settings['gemini_models'])}")
     print("-" * 50)
+
+    print("Preparing model (downloads and caches on first use)...")
+    if not prepare_model(app_settings):
+        print("Model/proxy not ready - transcription may fail.")
 
     recorder = Recorder(AUDIO_FILE)
     print(f"Speak now (recording starts immediately, stops after ~2s of silence)...")
