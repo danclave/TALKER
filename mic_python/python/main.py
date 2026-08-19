@@ -13,6 +13,16 @@ from recorder import Recorder
 from banner import print_banner
 import importlib
 
+import settings as settings_module
+
+# Make console output crash-proof on non-UTF-8 consoles (cp1251/cp1252):
+# unencodable characters (emoji, foreign text) become '?' instead of raising.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(errors="replace")
+    except Exception:
+        pass
+
 ####################################################################################################
 # CONFIG
 ####################################################################################################
@@ -41,28 +51,65 @@ COMMANDS = {
     'TRANSCRIBING': 'TRANSCRIBING',
     'START'       : 'START-',   # syntax: START-<lang>-<prompt>
     'STOP': 'STOP',
-    'DONE': 'DONE'
+    'DONE': 'DONE',
+    'ERROR': 'ERROR'
 }
+
+
+####################################################################################################
+# STARTUP CONFIG RESOLUTION
+####################################################################################################
+
+def resolve_startup_config():
+    """Decide provider/model/language for this session.
+
+    - CLI provider argument (legacy/advanced): bypass the menu entirely.
+      Optional 2nd argument overrides the whisper size or gemini model.
+    - Otherwise: always show the interactive menu, prefilled from settings.
+    """
+    app_settings = settings_module.load_settings()
+
+    if len(sys.argv) > 1 and sys.argv[1] in settings_module.VALID_PROVIDERS:
+        app_settings["provider"] = sys.argv[1]
+        if len(sys.argv) > 2 and sys.argv[2]:
+            if app_settings["provider"] == "whisper_local" and sys.argv[2] in settings_module.WHISPER_MODELS:
+                app_settings["whisper_model"] = sys.argv[2]
+            elif app_settings["provider"] == "gemini_proxy":
+                app_settings["gemini_models"] = [sys.argv[2]]
+        return app_settings
+
+    app_settings, _ = settings_module.run_menu(app_settings)
+    return app_settings
+
+
+def configure_provider(provider, app_settings):
+    """Import the provider module and apply per-provider settings."""
+    module = importlib.import_module(provider)
+    configure = getattr(module, "configure", None)
+    if configure:
+        if provider == "whisper_local":
+            configure(model_size=app_settings["whisper_model"])
+        elif provider == "gemini_proxy":
+            configure(model_chain=app_settings["gemini_models"])
+    return module
+
 
 ####################################################################################################
 # MAIN
 ####################################################################################################
 
 def main():
+    observer = None
     try:
         print("-"*50)
         print_banner("TALKER")
         print("-"*50)
 
-        # Determine the provider from command-line arguments
-        provider = "gemini_proxy"  # Default provider
-        if len(sys.argv) > 1:
-            provider_arg = sys.argv[1]
-            if provider_arg in ["whisper_local", "whisper_api", "gemini_proxy"]:
-                provider = provider_arg
-        
-        # Dynamically import the selected provider
-        transcription_module = importlib.import_module(provider)
+        app_settings = resolve_startup_config()
+        provider = app_settings["provider"]
+        app_language = app_settings["language"]  # app setting always wins over game-sent lang
+
+        transcription_module = configure_provider(provider, app_settings)
         load_api_key = getattr(transcription_module, "load_openai_api_key")
         transcribe_audio_file_func = getattr(transcription_module, "transcribe_audio_file")
 
@@ -70,24 +117,28 @@ def main():
         recorder = Recorder(AUDIO_FILE)
         Path(COMMAND_FILE).touch()
 
-        handler  = CommandHandler(recorder)
+        handler  = CommandHandler(recorder, transcribe_audio_file_func, app_language)
         observer = Observer()
         observer.schedule(handler, TEMP_DIR, recursive=False)
         observer.start()
 
         logging.info("Observer running, watching %s", COMMAND_FILE)
+        print(f"Provider: {provider} | Language: {app_language}")
         print("You can now use the in-game key to talk.")
         while True:
             time.sleep(1)
 
     except KeyboardInterrupt:
         logging.info("User interrupt.")
+    except SystemExit:
+        raise
     except Exception:
         logging.exception("Unhandled error.")
     finally:
         try:
-            observer.stop(); observer.join()
-        except NameError:
+            if observer is not None:
+                observer.stop(); observer.join()
+        except Exception:
             pass
         logging.info("Shutdown complete.")
 
@@ -96,27 +147,33 @@ def main():
 # START COMMAND
 ####################################################################################################
 
-DEFAULT_LANG = None            # let Whisper auto-detect unless user supplies code
-
 def parse_start_line(line: str):
-    """Extract (lang, prompt) from 'START-...'."""
+    """Extract (lang, prompt) from 'START-...'.
+
+    The game sends 'START-<lang>-<prompt>' where <lang> may be empty ('START--<prompt>').
+    The parsed language is informational only - the app's configured language always wins.
+    """
     payload = line[len(COMMANDS['START']):]          # after START-
     if len(payload) >= 3 and payload[2] == '-':
         lang = payload[:2]
         prompt = payload[3:]
+    elif payload.startswith('-'):                    # empty language: START--<prompt>
+        lang = None
+        prompt = payload[1:]
     else:
-        lang  = DEFAULT_LANG
-        prompt= payload
+        lang = None
+        prompt = payload
     return lang, prompt
-
 
 
 ####################################################################################################
 # COMMAND HANDLER
 ####################################################################################################
 class CommandHandler(FileSystemEventHandler):
-    def __init__(self, recorder: Recorder):
+    def __init__(self, recorder: Recorder, transcribe_func, app_language: str):
         self.recorder = recorder
+        self.transcribe_func = transcribe_func
+        self.app_language = app_language
 
     def on_modified(self, event):
         try:
@@ -134,36 +191,22 @@ class CommandHandler(FileSystemEventHandler):
         elif raw.strip() == COMMANDS['STOP']:
             self.recorder.stop_recording()
 
-    def _record_session(self, prompt: str = '', language: str | None = DEFAULT_LANG):
+    def _record_session(self, prompt: str = '', language: str | None = None):
         try:
-            # The provider is already determined in the main function, so we can reuse it here.
-            provider = "gemini_proxy"  # Default provider
-            if len(sys.argv) > 1:
-                provider_arg = sys.argv[1]
-                if provider_arg in ["whisper_local", "whisper_api", "gemini_proxy"]:
-                    provider = provider_arg
-            
-            # Dynamically import the selected provider
-            transcription_module = importlib.import_module(provider)
-            transcribe_audio_file_func = getattr(transcription_module, "transcribe_audio_file")
-
             write_to_file(COMMAND_FILE, COMMANDS['LISTENING'])
             self.recorder.start_recording()
             while self.recorder.is_recording():
                 time.sleep(0.1)
 
             write_to_file(COMMAND_FILE, COMMANDS['TRANSCRIBING'])
-            text = transcribe_audio_file_func(AUDIO_FILE, prompt=prompt, lang=language)
+            # the app's configured language always wins over what the game sent
+            text = self.transcribe_func(AUDIO_FILE, prompt=prompt, lang=self.app_language)
             write_to_file(TRANSCRIPTION_FILE, text)
             write_to_file(COMMAND_FILE, COMMANDS['DONE'])
 
         except Exception as e:
             logging.error("Recording session failed: %s", e)
             write_to_file(COMMAND_FILE, COMMANDS['ERROR'])
-
-
-
-
 
 
 

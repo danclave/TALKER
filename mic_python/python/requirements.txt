@@ -5,4 +5,5 @@ soundfile
 watchdog
 httpx
 faster-whisper
+vosk
 requests
