@@ -35,14 +35,14 @@ function on_mcm_load()
             {
                 id = "custom_ai_model",
                 type = "input",
-                val = "gemini/gemini-2.5-flash",
-                def = "gemini/gemini-2.5-flash",
+                val = "gemini/gemini-3.7-flash",
+                def = "gemini/gemini-3.7-flash",
             },
             {
                 id = "custom_ai_model_fast",
                 type = "input",
-                val = "gemini/gemini-2.5-flash-lite",
-                def = "gemini/gemini-2.5-flash-lite",
+                val = "gemini/gemini-3.5-flash-lite",
+                def = "gemini/gemini-3.5-flash-lite",
             },
             {
                 id = "reasoning_level",
@@ -138,8 +138,8 @@ local defaults = {
     ["gpt_version"] = "gpt-4o",
     ["language"] = language.any.long,
     ["ai_model_method"] = 3,
-    ["custom_ai_model"] = "google/gemini-2.5-flash",
-    ["custom_ai_model_fast"] = "google/gemini-2.5-flash-lite-preview-06-17",
+    ["custom_ai_model"] = "gemini/gemini-3.7-flash",
+    ["custom_ai_model_fast"] = "gemini/gemini-3.5-flash-lite",
     ["voice_provider"] = 2,
     ["reasoning_level"] = -1,
 }

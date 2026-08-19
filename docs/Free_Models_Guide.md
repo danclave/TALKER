@@ -8,7 +8,7 @@ This guide provides a detailed walkthrough for setting up and using free AI mode
 
 *   **Gemini Free Tier Gutted**: Google has drastically reduced Gemini API rate limits, making standard API keys essentially **unusable** for TALKER. Gemini 2.5 Pro has been **removed from the free tier entirely**. Flash and Flash-Lite are now limited to **20 requests per day** (down from 250-1,000). This is nowhere near enough for normal gameplay.
 *   **New Recommendations**: **Nvidia** is now the recommended free provider, with **iFlow** as an excellent alternative. Both offer generous limits and access to high-quality models.
-*   **Gemini CLI Still Works**: If you specifically want Gemini models, the **Gemini CLI (OAuth)** method still provides higher rate limits and remains viable.
+*   **Gemini CLI Removed**: The Gemini CLI (OAuth) provider no longer exists in current proxy versions. Use standard Gemini API keys, Nvidia, or iFlow instead.
 
 ---
 
@@ -32,9 +32,8 @@ This guide provides a detailed walkthrough for setting up and using free AI mode
 ## Supported Free Providers
 1.  **Nvidia (Recommended)**: Nvidia offers a robust selection of high-quality models with generous rate limits. Their Mistral, Kimi and DeepSeek models are excellent performers for TALKER.
 2.  **iFlow (Recommended - OAuth)**: A powerful aggregator platform providing free access to multiple premium models (Qwen, DeepSeek, GLM, Kimi) through OAuth 2.0 authentication. Supports both OAuth and direct API keys. Very reliable.
-3.  **Gemini CLI (Advanced - OAuth)**: An advanced provider using OAuth 2.0 to access Google's internal Gemini CLI API endpoints with significantly higher rate limits than standard API keys. Requires OAuth setup but provides access to high-quality Gemini models.
-4.  **Mistral (Preliminary)**: Mistral.ai offers a free tier with seemingly very decent usage limits. This provider is currently being investigated for full integration with TALKER, but early adopters can add their API keys to the proxy and experiment with models like Mistral Small, Mistral Large, and Mixtral reasoning models.
-5.  **Gemini (API Keys)**: ⚠️ **No longer recommended.** Google has slashed free tier limits to ~20 requests/day, making this essentially unusable for normal gameplay. Use Nvidia, iFlow, or Gemini CLI instead.
+3.  **Mistral (Preliminary)**: Mistral.ai offers a free tier with seemingly very decent usage limits. This provider is currently being investigated for full integration with TALKER, but early adopters can add their API keys to the proxy and experiment with models like Mistral Small, Mistral Large, and Mixtral reasoning models.
+4.  **Gemini (API Keys)**: ⚠️ **No longer recommended.** Google has slashed free tier limits to ~20 requests/day, making this essentially unusable for normal gameplay. Use Nvidia or iFlow instead.
 
 ---
 
@@ -59,13 +58,15 @@ Google's Gemini is the top choice for its generous free tier and strong performa
 
 Gemini and Gemma models offer a range of options, each with different trade-offs between speed, intelligence, and rate limits.
 
-**Gemini Models**
+**Gemini Models** (updated August 2026; audio input works on all Flash/Flash-Lite models below, which is what the mic app uses)
 
 | Model Name (Provider Prefix)                     | Speed      | Intelligence | Notes                                                                                                                                                               |
 | ------------------------------------------------ | ---------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `gemini/gemini-2.5-pro`                          | Slowest    | Smartest     | The most powerful model, ideal for complex dialogue and reasoning. Even as the "slowest" Gemini model, it's still faster than most non-Gemini models.                  |
-| `gemini/gemini-2.5-flash`                        | Fast       | Smart        | **Recommended for most tasks.** A great balance of speed and intelligence, making it a versatile choice for both general use and thinking mode.                       |
-| `gemini/gemini-2.5-flash-lite`     | Fastest    | Decent       | The quickest model, perfect for fast-paced interactions where raw speed is the top priority.                                                                        |
+| `gemini/gemini-3.1-pro-preview`                  | Slowest    | Smartest     | The most powerful model, ideal for complex dialogue and reasoning. Even as the "slowest" Gemini model, it's still faster than most non-Gemini models.                  |
+| `gemini/gemini-3.7-flash`                        | Fast       | Smart        | **Recommended for most tasks.** Newest Flash generation; a great balance of speed and intelligence.                                                                  |
+| `gemini/gemini-3.5-flash`                        | Fast       | Smart        | Previous Flash generation, still an excellent all-rounder.                                                                                                          |
+| `gemini/gemini-3.5-flash-lite`                   | Fastest    | Decent       | The quickest model, perfect for fast-paced interactions where raw speed is the top priority. Default for the mic app's voice transcription.                          |
+| `gemini/gemini-3.1-flash-lite`                   | Fastest    | Decent       | Older lite generation with very reliable audio transcription; serves as the mic app's fallback model.                                                               |
 
 **Gemma Models**
 
@@ -73,13 +74,13 @@ Gemini and Gemma models offer a range of options, each with different trade-offs
 | ---------------------------------- | ---------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `gemini/gemma-3-27b-it`            | Fast       | Good         | A strong performer that cannot reason. With enough keys, its high rate limit allows for virtually unlimited use, making it a great fallback option for non-reasoning tasks. |
 
-**Free Tier Rate Limits (Per key)**
+**Free Tier Rate Limits (Per key)** — historical snapshot from December 2025, model names updated; re-verify before relying on these numbers:
 
 | Model                                    | RPM | TPM     | RPD    |
 | ---------------------------------------- | --- | ------- | ------ |
-| Gemini 2.5 Pro                           | 5   | 125,000 | 50    |
-| Gemini 2.5 Flash                         | 10  | 250,000 | 250    |
-| Gemini 2.5 Flash-Lite Preview 06-17      | 15  | 250,000 | 1,000  |
+| Gemini Pro                               | 5   | 125,000 | 50    |
+| Gemini Flash                             | 10  | 250,000 | 250    |
+| Gemini Flash-Lite                        | 15  | 250,000 | 1,000  |
 | Gemma 3 & 3n                               | 30  | 15,000  | 14,400 |
 
 *   **RPM**: Requests Per Minute
@@ -227,72 +228,7 @@ For now, this allows early adopters to test Mistral's capabilities directly.
 
 ---
 
-## 4. Gemini CLI (Advanced - OAuth)
-
-Gemini CLI is an advanced provider that uses OAuth 2.0 authentication to access Google's internal Gemini API endpoints—the same ones used by the Google Cloud Code extension. This provides access to significantly higher rate limits compared to the standard free Gemini API keys.
-
-### Key Advantages
-
-*   **Higher Rate Limits**: Access to internal Google Cloud endpoints (`cloudcode-pa.googleapis.com`) offers much more generous limits than the public API.
-*   **Free Tier Access**: Works with Google Cloud's free tier—no credit card required for initial setup.
-*   **Same Models as Regular Gemini**: Access to the same high-quality Gemini models (Pro, Flash, Flash-Lite).
-*   **Automatic Project Discovery**: The proxy automatically finds or creates a Google Cloud Project for you.
-*   **Smart Fallback System**: Automatically switches to preview/alternate models when rate limits are hit(When available).
-
-### Important Considerations
-
-*   **Easier Than API Keys**: OAuth setup is actually *simpler* than manual API key generation—just 2 button clicks in the TUI and you're done!
-*   **Google Account Required**: You'll need a Google account to authenticate.
-*   **Slightly Higher Latency**: Gemini CLI has slightly higher latency (more "laggy") than direct API access, but this is only very noticeable when using the Pro model. Flash and Flash-Lite models are still very responsive.
-*   **Potential Account Risk**: While unlikely, using unofficial API endpoints may carry some risk to your Google account. Use a secondary account if concerned.
-
-### How to Set Up Gemini CLI
-
-**Step 1: Run the Credential Manager**
-*   Launch `proxy_app.exe` (without any arguments) from the LLM-API-Key-Proxy folder to open the interactive TUI.
-*   Select **"Manage Credentials"** from the main menu.
-*   Choose **"Add OAuth Credential"** and select **"Gemini CLI"** from the provider list.
-
-**Step 2: Complete OAuth Flow**
-*   Your browser will automatically open to Google's login page.
-*   Sign in with your Google account (use a secondary account if concerned about risk).
-*   Grant the requested permissions when prompted.
-*   The proxy will automatically handle the OAuth callback and save your credentials.
-
-**Step 3: Automatic Configuration**
-*   The proxy will automatically:
-    *   Discover your Google Cloud Project ID (or help you create a free-tier project).
-    *   Validate your credentials.
-    *   Save everything to `oauth_creds/gemini_cli_oauth_1.json`.
-
-**Step 4: Token Refresh**
-*   Gemini CLI credentials are automatically refreshed in the background **while the proxy is running**.
-*   If the proxy is closed for multiple days, you may need to re-authenticate when you restart it.
-*   If a refresh token expires, the proxy will guide you through re-authentication.
-
-### Available Models
-
-| Model Name (Provider Prefix)                     | Speed      | Intelligence | Notes                                                                                                                                                               |
-| ------------------------------------------------ | ---------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `gemini_cli/gemini-2.5-pro` / `gemini_cli/gemini-3.1-pro-preview` (only for paid accounts)                       | Slowest    | Smartest     | The most powerful model, ideal for complex dialogue and reasoning. Access to high-limit internal endpoints makes this much faster than the public API version.    |
-| `gemini_cli/gemini-2.5-flash` / `gemini_cli/gemini-3-flash-preview`                   | Fast       | Smart        | **Recommended for most tasks.** Excellent balance of speed and intelligence with high rate limits.                                                                |
-| `gemini_cli/gemini-2.5-flash-lite`               | Fastest    | Decent       | The quickest option with the highest rate limits. Perfect for fast-paced interactions.                                                                             |
-
-### Rate Limits
-
-Gemini CLI uses Google's internal Cloud Code API endpoints, which have significantly higher limits than the public API:
-
-*   **Estimated Limits**: Much higher than standard Gemini API (exact limits vary by project tier and usage patterns).
-*   **Tier Detection**: The proxy automatically detects your Google Cloud tier (free-tier, legacy-tier, or paid Gemini).
-
-### Technical Details
-
-*   **Authentication**: Full OAuth 2.0 web flow with automatic token refresh every 10 minutes (configurable via `OAUTH_REFRESH_INTERVAL`).
-*   **Invalid Grant Handling**: If refresh tokens expire due to inactivity, the proxy automatically triggers re-authentication.
-
----
-
-## 5. iFlow (Advanced - OAuth)
+## 4. iFlow (Advanced - OAuth)
 
 iFlow is a powerful aggregator platform that provides free access to multiple high-quality models through a unified API. It uses OAuth 2.0 authentication with a local callback server to manage credentials securely.
 

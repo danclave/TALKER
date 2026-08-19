@@ -63,7 +63,7 @@ The [LLM-API-Key-Proxy](https://github.com/Mirrowel/LLM-API-Key-Proxy) is the be
     *   ⚙️ **Configure Proxy**: Set host, port, PROXY_API_KEY, and request logging
     *   🔑 **Manage Credentials**: Add/edit API keys and OAuth credentials
         - Supports any LiteLLM-compatible provider
-        - OAuth support for Gemini CLI, Qwen Code, and iFlow with automated browser authentication
+        - OAuth support for Qwen Code and iFlow with automated browser authentication
         - Automatic discovery of existing credentials from environment variables and system directories
         - Export credentials for stateless deployment (Railway, Render, etc.)
     *   📊 **View Status**: See configured providers, credential counts, and advanced settings
@@ -83,7 +83,11 @@ If you are using a paid service (OpenAI and Openrouter support only) and prefer 
 
 ### Step 3: Launch and Play
 1.  If you are using the API Proxy (Option A), make sure `proxy_app.exe` is running.
-2.  If you plan to use voice chat, run `launch_mic.bat` and select your preferred transcription service.
+2.  If you plan to use voice chat, run `launch_mic.bat` (or `talker_mic.exe` directly). A configuration menu opens where you pick:
+    *   **Transcription provider**: Whisper local (offline, 100 languages), Vosk local (offline, ultra-light ~40 MB models), or Gemini via the API proxy (best quality).
+    *   **Language**: always set explicitly (searchable list, English/Russian first).
+    *   **Whisper model size** and, for Gemini, the **voice model fallback chain**.
+    Settings are saved to `talker_mic_settings.json` next to the exe and can be changed any time by simply starting the app again.
 3.  Launch S.T.A.L.K.E.R. Anomaly.
 
 ### Step 4: Configure In-Game Settings (MCM)
@@ -95,9 +99,9 @@ Once in-game, you need to configure TALKER in the Mod Configuration Menu (MCM) b
     *   **open-ai** or **open-router-ai**: If you are using a direct API key.
 3.  **Set Your Custom Models (Proxy Users)**: If you are using the proxy, you can specify which models to use.
     *   **Custom AI Model**: Enter the full name of your primary model. 
-        *   **Example**: `gemini/gemini-2.5-flash` for Gemini, `chutes/deepseek-ai/DeepSeek-V3` for Chutes, or `nvidia_nim/deepseek-ai/deepseek-r1` for Nvidia.
+        *   **Example**: `gemini/gemini-3.7-flash` for Gemini, `chutes/deepseek-ai/DeepSeek-V3` for Chutes, or `nvidia_nim/deepseek-ai/deepseek-r1` for Nvidia.
     *   **Custom AI Model Fast**: Enter the name of a smaller, faster, secondary model for less complex tasks.
-        *   **Example**: `gemini/gemini-2.5-flash-lite`.
+        *   **Example**: `gemini/gemini-3.5-flash-lite`.
 
     **Important Note on Model Names (Provider Prefixes)**
     When using the proxy, you must include a **provider prefix** in the model name. This tells the proxy which service to send the request to. Think of it like an address for your AI model.
@@ -105,7 +109,7 @@ Once in-game, you need to configure TALKER in the Mod Configuration Menu (MCM) b
     The format is always `provider_name/model_name`.
 
     Here are the prefixes for some of the supported providers:
-    *   **Gemini**: `gemini/` (e.g., `gemini/gemini-2.5-flash`)
+    *   **Gemini**: `gemini/` (e.g., `gemini/gemini-3.7-flash`)
     *   **Chutes**: `chutes/` (e.g., `chutes/deepseek-ai/DeepSeek-V3`)
     *   **Nvidia**: `nvidia_nim/` (e.g., `nvidia_nim/deepseek-ai/deepseek-r1`)
 
@@ -142,7 +146,7 @@ To use the recommended **Gemini via API Proxy** option in the launcher, you will
 
 For a more detailed walkthrough and a list of other free providers, please refer to the full [Free Models Guide](docs/Free_Models_Guide.md).
 
-**Note**: The proxy now features a modern **interactive TUI (Text User Interface)** launcher that makes configuration effortless. Run `proxy_app.exe` without arguments to access the full menu system for managing credentials, configuring settings, and running the proxy. The credential manager supports both standard API keys and OAuth credentials (like Gemini CLI), with automatic discovery from environment variables and system directories.
+**Note**: The proxy now features a modern **interactive TUI (Text User Interface)** launcher that makes configuration effortless. Run `proxy_app.exe` without arguments to access the full menu system for managing credentials, configuring settings, and running the proxy. The credential manager supports standard API keys and OAuth credentials, with automatic discovery from environment variables and system directories.
 
 ## Cheeki Breeki's video
   [![Cheeki Breeki](https://img.youtube.com/vi/WmM-PPKTA8s/0.jpg)](https://www.youtube.com/watch?v=WmM-PPKTA8s)

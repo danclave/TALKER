@@ -103,7 +103,7 @@ function c.voice_provider()
 end
 
 function c.custom_dialogue_model()
-    return cfg("custom_ai_model", "google/gemini-2.0-flash-001")
+    return cfg("custom_ai_model", "gemini/gemini-3.7-flash")
 end
 
 function c.custom_dialogue_model_fast()
