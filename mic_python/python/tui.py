@@ -42,6 +42,10 @@ def _normalize_key(key):
     return None
 
 
+class KeySourceExhausted(Exception):
+    """Raised when the key stream ends (window closed / stdin gone)."""
+
+
 class RealKeySource:
     """Reads keys from the real terminal via prompt_toolkit (one long-lived stream)."""
 
@@ -52,7 +56,13 @@ class RealKeySource:
 
     def _gen_keys(self):
         with self._input.raw_mode():
-            for key_press in self._input.read_keys():
+            while True:
+                try:
+                    key_press = self._input.read_keys()
+                except Exception:
+                    return  # stdin closed (window X / terminal gone)
+                if not key_press:
+                    return
                 yield SimpleNamespace(key=_normalize_key(key_press.key))
 
     def keys(self):
@@ -67,6 +77,14 @@ class FakeKeySource:
 
     def keys(self):
         return self._gen
+
+
+def get_key(key_source):
+    """Next key press, or None when the key stream has ended."""
+    try:
+        return next(key_source.keys()).key
+    except StopIteration:
+        return None
 
 
 ################################################################################################
@@ -119,7 +137,7 @@ def _footer(*pairs):
     parts = []
     for key, action in pairs:
         parts.append(f"[bold]{key}[/bold] {action}")
-    return "  ·  ".join(parts)
+    return Text.from_markup("  ·  ".join(parts), style=STYLE_HINT)
 
 
 def _provider_label(key, desc):
@@ -221,10 +239,11 @@ def _pick_list(console, key_source, title, items, footer=None):
         foot = footer or _footer(("↑↓", "move"), ("Enter", "select"), ("Esc", "back"), ("q", "quit"))
         _clear(console)
         console.print(panel)
-        console.print(Text(foot, style=STYLE_HINT), justify="center")
+        console.print(foot, justify="center")
 
-        kp = next(key_source.keys())
-        key = kp.key
+        key = get_key(key_source)
+        if key is None:
+            return None  # key stream ended (window closed)
         if key in ("up", "k"):
             selected = (selected - 1) % len(items)
         elif key in ("down", "j"):
@@ -289,13 +308,12 @@ def _language_picker(console, key_source, settings):
         )
         _clear(console)
         console.print(panel)
-        console.print(Text(_footer(("type", "filter"), ("↑↓", "move"), ("Enter", "select"),
-                                   ("Esc", "back"), ("q", "quit")), style=STYLE_HINT), justify="center")
+        console.print(_footer(("type", "filter"), ("↑↓", "move"), ("Enter", "select"),
+                                   ("Esc", "back"), ("q", "quit")), justify="center")
 
-        kp = next(key_source.keys())
-        key = kp.key
+        key = get_key(key_source)
         if key is None:
-            continue
+            return False  # stream ended
         if key in ("up",):
             selected = (selected - 1) % len(matches)
         elif key in ("down",):
@@ -399,13 +417,12 @@ def _gemini_picker(console, key_source, settings):
         )
         _clear(console)
         console.print(panel)
-        console.print(Text(_footer(("Space", "on/off"), ("u/d", "move up/down"),
-                                   ("Enter", "done"), ("Esc", "cancel")), style=STYLE_HINT), justify="center")
+        console.print(_footer(("Space", "on/off"), ("u/d", "move up/down"),
+                                   ("Enter", "done"), ("Esc", "cancel")), justify="center")
 
-        kp = next(key_source.keys())
-        key = kp.key
+        key = get_key(key_source)
         if key is None:
-            continue
+            return  # stream ended
         if key == "up":
             selected = (selected - 1) % len(rows)
         elif key == "down":
@@ -476,13 +493,12 @@ def _manager_view(console, key_source):
             )
             _clear(console)
             console.print(panel)
-            console.print(Text(_footer(("Tab", "switch group"), ("d", "delete"),
-                                       ("Enter", "select"), ("Esc", "back")), style=STYLE_HINT), justify="center")
+            console.print(_footer(("Tab", "switch group"), ("d", "delete"),
+                                       ("Enter", "select"), ("Esc", "back")), justify="center")
 
-            kp = next(key_source.keys())
-            key = kp.key
+            key = get_key(key_source)
             if key is None:
-                continue
+                return  # stream ended
             if key == "tab":
                 tab = 1 - tab
                 break
@@ -542,13 +558,11 @@ def run_tui(settings, on_test=None, console=None, key_source=None):
                   box=box.DOUBLE, border_style="cyan"),
             width=min(console.width, 76),
         )
-        console.print(Text(_footer(("↑↓", "move"), ("Enter", "select"), ("s", "save"),
-                                   ("q", "quit")), style=STYLE_HINT), justify="center")
-
-        kp = next(key_source.keys())
-        key = kp.key
+        console.print(_footer(("", "move"), ("Enter", "select"), ("s", "save"),
+                                   ("q", "quit")), justify="center")
+        key = get_key(key_source)
         if key is None:
-            continue
+            raise SystemExit(0)  # stream ended: quit cleanly
         if key == "up":
             selected = (selected - 1) % len(items)
         elif key == "down":
