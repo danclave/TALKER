@@ -90,12 +90,13 @@ def run_child(engine, audio_dir):
 
     if kind == "whisper":
         import whisper_local
-        whisper_local.configure(model_size=param)
+        whisper_local.configure(model_size=param, prefer_en_variant=False)
+        langs = ("en",) if param.endswith(".en") else AUDIO_LANGS
         t0 = time.perf_counter()
         model = whisper_local.get_model()          # cold load (downloads on first ever run)
         result["load_s"] = round(time.perf_counter() - t0, 2)
-        result["downloaded_mb"] = None
-        for lang in AUDIO_LANGS:
+        result["model"] = getattr(model, "model_size", param)
+        for lang in langs:
             path = f"{audio_dir}/{lang}.ogg"
             t0 = time.perf_counter()
             text = whisper_local.transcribe_audio_file(path, prompt="", lang=lang)

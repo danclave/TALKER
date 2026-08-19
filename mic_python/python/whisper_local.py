@@ -17,42 +17,61 @@ logging.basicConfig(encoding="utf-8")
 ROOT_DIR = Path(getattr(sys, "frozen", False) and sys.executable or __file__).resolve().parent
 DEFAULT_MODEL_SIZE = "small"  # multilingual, best speed/accuracy balance for CPU
 
-VALID_SIZES = ("tiny", "base", "small", "medium", "large-v3-turbo")
+VALID_SIZES = ("tiny", "tiny.en", "base", "base.en", "small", "small.en",
+               "medium", "medium.en", "large-v3-turbo")
+
+# English-only variants perform better on English audio (same size/speed).
+# Used automatically when the app language is English. No other language has
+# dedicated whisper models.
+EN_VARIANTS = {"tiny": "tiny.en", "base": "base.en",
+               "small": "small.en", "medium": "medium.en"}
 
 ################################################################################################
-# MODEL LOADING (singleton - load once, reuse for every transcription)
+# MODEL LOADING (cached per model name - load once, reuse for every transcription)
 ################################################################################################
 
-_model = None
+_models = {}
 _model_size = None
+_prefer_en_variant = True
 
 
-def configure(model_size=None):
-    """Set the model size to use (called by main from settings/CLI)."""
-    global _model_size
+def configure(model_size=None, prefer_en_variant=None):
+    """Set the model size / English-variant behavior (called by main or benchmark)."""
+    global _model_size, _prefer_en_variant
     if model_size in VALID_SIZES:
         _model_size = model_size
+    if prefer_en_variant is not None:
+        _prefer_en_variant = prefer_en_variant
 
 
 def _current_size():
     return _model_size or DEFAULT_MODEL_SIZE
 
 
-def get_model():
-    global _model
-    if _model is not None:
-        return _model
+def _resolve_size(lang):
     size = _current_size()
-    print(f"Loading faster-whisper model '{size}' (first run downloads it)...")
+    if _prefer_en_variant and lang == "en" and size in EN_VARIANTS:
+        return EN_VARIANTS[size]
+    return size
+
+
+def get_model(lang=None):
+    name = _resolve_size(lang)
+    if name in _models:
+        return _models[name]
+    label = (f"{name} (English variant of '{_current_size()}')"
+             if name != _current_size() else name)
+    print(f"Loading faster-whisper model '{label}' (first run downloads it)...")
     try:
-        _model = WhisperModel(size, compute_type="int8", device="cpu")
+        model = WhisperModel(name, compute_type="int8", device="cpu")
     except Exception as e:
-        print(f"[ERROR] Failed to load model '{size}': {e}")
+        print(f"[ERROR] Failed to load model '{name}': {e}")
         print("-> Check your internet connection (models download once from Hugging Face)")
         print("-> or try a smaller model size in the mic app menu")
         raise
-    print(f"[OK] faster-whisper '{size}' loaded.")
-    return _model
+    _models[name] = model
+    print(f"[OK] faster-whisper '{name}' loaded.")
+    return model
 
 
 ################################################################################################
@@ -65,11 +84,11 @@ def transcribe_audio_file(audio_path: str,
                           out_path: str | None = None) -> str:
     """Transcribe audio using local faster-whisper model.
 
-    NOTE: initial_prompt only helps when it matches the audio language.
+    NOTE:     initial_prompt only helps when it matches the audio language.
     Whisper has no translation for arbitrary prompts, so it is passed
     only for English audio and skipped otherwise to avoid degrading output.
     """
-    model = get_model()
+    model = get_model(lang)
 
     if lang not in LANGUAGES:
         logging.warning("Unknown language code '%s', falling back to auto-detect.", lang)

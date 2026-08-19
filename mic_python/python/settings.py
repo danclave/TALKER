@@ -124,6 +124,8 @@ def pick_language(current):
 
 
 def pick_whisper_model(current):
+    print("  Note: English automatically uses the .en variant of the chosen size")
+    print("        (slightly better English accuracy, same speed).")
     entries = [
         desc + ("  [current]" if name == current else "")
         for name, desc in WHISPER_MODELS.items()
