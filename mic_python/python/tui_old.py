@@ -20,29 +20,48 @@ import models_manager
 
 ESC = "\x1b"
 
+# Optional debug instrumentation: set TALKER_TUI_KEYLOG=<path> to record
+# every raw key press and every executed action (used for diagnostics).
+import os as _os
+_KEYLOG = _os.environ.get("TALKER_TUI_KEYLOG")
+
+
+def _dbg(msg):
+    if _KEYLOG:
+        try:
+            with open(_KEYLOG, "a", encoding="utf-8") as f:
+                f.write(msg + "\n")
+        except Exception:
+            pass
+
 
 ################################################################################################
 # KEY INPUT
 ################################################################################################
 
-def _normalize_key(key):
-    """Map a prompt_toolkit key to a simple string: up/down/enter/escape/... or a char.
+def _normalize_key(key, data=None):
+    """Map a prompt_toolkit key to a simple name: up/down/enter/escape/... or a char.
 
-    Keys enum members are str subclasses whose .value is the canonical name
-    ('up', 'enter', 'escape', ...); note Keys.Enter aliases ControlM.
-    Plain characters arrive as 1-char strings. Returns None when unrecognized
-    (callers skip those, they are NOT end-of-stream).
+    Keys enum members stringify as 'Keys.Up' and their .value uses SHORT
+    forms ('c-m' for ControlM/Enter, 'c-c' for Ctrl+C). Plain characters
+    arrive as 1-char strings. Unrecognized keys return None (callers skip
+    them - that is NOT end-of-stream).
     """
     mapping = {
         "up": "up", "down": "down", "left": "left", "right": "right",
-        "enter": "enter", "control-m": "enter", "escape": "escape",
-        "backspace": "backspace", "space": "space",
+        "enter": "enter", "control-m": "enter", "c-m": "enter", "c-j": "enter",
+        "escape": "escape", "esc": "escape",
+        "backspace": "backspace", "bspace": "backspace",
+        "space": "space",
         "home": "home", "end": "end",
-        "pageup": "pgup", "pagedown": "pgdn", "delete": "delete",
+        "pageup": "pgup", "pgdn": "pgdn", "pagedown": "pgdn",
+        "delete": "delete", "del": "delete",
         "s-up": "shift-up", "s-down": "shift-down",
         "c-c": "ctrl-c", "c-d": "ctrl-d", "tab": "tab",
     }
-    # Keys enum member? use its canonical .value
+    # KeyPress.data carries the literal bytes for control keys ('\r' = Enter)
+    if data in ("\r", "\n"):
+        return "enter"
     val = getattr(key, "value", None)
     if isinstance(val, str) and val in mapping:
         return mapping[val]
@@ -88,7 +107,10 @@ class RealKeySource:
                     time.sleep(self.POLL_SECONDS)
                     continue
                 for key_press in key_presses:
-                    yield SimpleNamespace(key=_normalize_key(key_press.key))
+                    data = getattr(key_press, "data", None)
+                    _dbg(f"raw key={key_press.key!r} data={data!r}")
+                    yield SimpleNamespace(key=_normalize_key(key_press.key, data),
+                                          data=data)
 
     def keys(self):
         return self._gen
@@ -98,7 +120,7 @@ class FakeKeySource:
     """Replays a scripted list of normalized key names (for tests)."""
 
     def __init__(self, script):
-        self._gen = (SimpleNamespace(key=k) for k in script)
+        self._gen = (SimpleNamespace(key=k, data=None) for k in script)
 
     def keys(self):
         return self._gen
@@ -112,12 +134,14 @@ def get_key(key_source):
     """
     try:
         for kp in key_source.keys():
-            key = _normalize_key(kp.key)
+            key = kp.key  # pre-normalized by the key source
             if key is None:
+                _dbg("get_key: skipped unrecognized")
                 continue  # unrecognized: skip, keep reading
+            _dbg(f"get_key: -> {key!r}")
             return key
     except StopIteration:
-        pass
+        _dbg("get_key: stream exhausted (EOF)")
     return None  # stream exhausted
 
 
@@ -365,6 +389,7 @@ def _language_picker(console, key_source, settings):
             selected = 0
         elif key == "enter":
             code = matches[selected]
+            _dbg(f"lang select: {code}")
             settings["language"] = code
             options = vosk_model_options(code)
             if len(options) > 1:
@@ -393,6 +418,7 @@ def _model_picker(console, key_source, code, overrides):
                 label += "  [bold cyan]• current[/]"
             rows.append(label)
         result = _pick_list(console, key_source, f"Vosk models for {LANGUAGES[code]}", rows)
+        _dbg(f"model picker result: {result!r}")
         if result is None:
             return None
         i = result
@@ -610,6 +636,7 @@ def run_tui(settings, on_test=None, console=None, key_source=None):
             raise SystemExit(0)
         elif key == "enter":
             action = HOME_ACTIONS[selected]
+            _dbg(f"home action: {action}")
             if action == "start":
                 return settings
             elif action == "save":

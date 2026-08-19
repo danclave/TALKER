@@ -56,4 +56,15 @@ result = tui.run_tui(st, on_test=None, console=make_console(),
 assert result["language"] == "en", result
 print("FLOW 4 OK: escape cancels language change")
 
+# Flow 5: normalization of REAL prompt_toolkit keys (regression: Enter was 'c-m')
+from prompt_toolkit.keys import Keys
+
+assert tui._normalize_key(Keys.ControlM, "\r") == "enter", "Enter via c-m + data"
+assert tui._normalize_key(Keys.ControlM) == "enter", "Enter via enum value"
+assert tui._normalize_key(Keys.Up) == "up"
+assert tui._normalize_key(Keys.Down) == "down"
+assert tui._normalize_key("a") == "a"
+assert tui._normalize_key(" ") == "space"
+print("FLOW 5 OK: real prompt_toolkit keys normalize correctly (c-m -> enter)")
+
 print("ALL TUI FLOWS PASSED")
