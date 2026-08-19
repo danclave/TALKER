@@ -1,24 +1,27 @@
 import logging
-
-import sounddevice as sd
-import soundfile as sf
-import numpy as np
+import os
 import threading
 import time
-import os
+
+import numpy as np
+import sounddevice as sd
+import soundfile as sf
 
 class Recorder:
-    def __init__(self, output_file=None, silence_threshold=2.0, silence_level=1000):
+    def __init__(self, output_file=None, silence_threshold=2.0, silence_level=1000,
+                 device=None):
         """
         Initializes the Recorder.
 
         :param output_file: Path to save the recorded audio file. If None, a temp file will be used.
         :param silence_threshold: Duration of silence in seconds to stop recording automatically.
         :param silence_level: Audio level considered as silence (lower means more sensitive).
+        :param device: Input device index (None = system default).
         """
         self.output_file = output_file or self._generate_temp_filename()
         self.silence_threshold = silence_threshold
         self.silence_level = silence_level
+        self.device = device
         self._recording = False
         self._audio_frames = []
         self._lock = threading.Lock()
@@ -53,6 +56,7 @@ class Recorder:
             self._stream = sd.InputStream(samplerate=self._rate,
                                           channels=self._channels,
                                           dtype=self._dtype,
+                                          device=self.device,
                                           callback=self._audio_callback)
             self._stream.start()
             logging.info("Recording started.")
@@ -76,7 +80,7 @@ class Recorder:
 
             self._save_audio()
             logging.info("Recording stopped due to silence.")
-            # print("Recording stopped and audio saved to:", self.output_file)
+            # logging.debug("Recording stopped and audio saved to: %s", self.output_file)
 
     def is_recording(self):
         """
@@ -84,6 +88,18 @@ class Recorder:
         """
         with self._lock:
             return self._recording
+
+    def get_level(self):
+        """Current raw mic level (mean abs int16 amplitude), or None."""
+        with self._lock:
+            return self._last_audio_level
+
+    def get_silence_remaining(self):
+        """Seconds until auto-stop if input stays silent, else None."""
+        with self._lock:
+            if self._silence_start is None:
+                return None
+            return max(0.0, self.silence_threshold - (time.time() - self._silence_start))
 
     def _audio_callback(self, indata, frames, time_info, status):
         """

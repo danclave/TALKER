@@ -34,6 +34,23 @@ async def flow_language():
     st = fresh()
     app = MicApp(st)
     async with app.run_test(size=(110, 32)) as pilot:
+        # --- ordering: pinned, then whisper-supported, then vosk-only ---
+        options = app._language_options("")
+        ids = [getattr(o, "id", "") for o in options]
+        lang_ids = [i[5:] for i in ids if i.startswith("lang:")]
+        assert lang_ids[:6] == ["en", "en-gb", "ru", "uk", "pl", "es"], lang_ids[:6]
+        vosk_only = [c for c in lang_ids if c in ("eo", "ky")]
+        assert lang_ids[-2:] == ["eo", "ky"], f"vosk-only must be last: {lang_ids[-4:]}"
+        assert len(vosk_only) == 2
+        # first non-pinned entry must be whisper-capable
+        assert __import__("languages").whisper_supported(lang_ids[6]), lang_ids[6]
+        # --- BIG tag only on big models ---
+        el_label = next(o.prompt for o, i in zip(options, ids) if i == "lang:el")
+        assert "1063" in el_label and "BIG" in el_label, el_label
+        ru_label = next(o.prompt for o, i in zip(options, ids) if i == "lang:ru")
+        assert "39" not in ru_label, f"small vosk size must not be shown: {ru_label}"
+        assert "whisper + vosk" in ru_label
+        # --- selection flow as before ---
         await pilot.press("4")
         assert app.current_view == "language"
         await pilot.click("#lang-filter")
@@ -49,7 +66,7 @@ async def flow_language():
         assert st["vosk_model_overrides"].get("ru") == "vosk-model-small-ru-0.22", st
         assert app._dirty
         assert "unsaved" in str(app._setup_strip())
-    print("FLOW 1 OK: language filter + ru + model override + unsaved marker")
+    print("FLOW 1 OK: language order + BIG-only tags + ru override + unsaved")
 
 
 async def flow_gemini():
@@ -150,16 +167,19 @@ async def flow_manager_delete_cancel():
 async def flow_radio_check():
     import time as _time
 
-    def slow_test(settings, status=None, stop_requested=None, on_recording=None):
+    def slow_test(settings, status=None, stop_requested=None, on_recording=None,
+                  on_level=None):
         say = status or print
         say("recording... speak now (stops after ~2s of silence)")
         if on_recording:
             on_recording(True)
-        for _ in range(100):
+        for i in range(100):
+            if on_level:
+                on_level(30 + (i % 5) * 10, None if i % 3 else 1.5, i * 0.1)
             if stop_requested and stop_requested():
                 say("stop requested - recording ended")
                 break
-            _time.sleep(0.1)
+            _time.sleep(0.05)
         if on_recording:
             on_recording(False)
         say("heard: test sentence for the log")
@@ -181,17 +201,22 @@ async def flow_radio_check():
             log = app.query_one("#test-log", RichLog)
             assert any("speak now" in getattr(strip, "text", "") for strip in log.lines)
             assert app.recording
-            assert "recording" in app.query_one("#test").classes
             assert "on" in app.query_one("#rec-badge").classes
+            # level meter updated with bar cells + threshold marker
+            meter_text = str(app.query_one("#meter").render())
+            assert "|" in meter_text, meter_text
+            # heard panel + history filled after finish
             await pilot.click("#test-stop")
             await pilot.pause(1.5)
             assert not app.recording
-            assert "recording" not in app.query_one("#test").classes
             assert not app.query_one("#test-start").disabled
-            assert app.query_one("#test-stop").disabled
+            heard = str(app.query_one("#heard-panel").render())
+            assert "test sentence for the log" in heard, heard
+            assert app._history and "test sentence" in app._history[0][2], app._history
+            assert len(app._history) == 1
     finally:
         providers.prepare_model = orig_prepare
-    print("FLOW 6 OK: radio check logs + REC indicator + stop button")
+    print("FLOW 6 OK: radio check + meter + heard panel + history + stop")
 
 
 async def flow_dashboard_and_escape():
@@ -249,6 +274,38 @@ async def flow_log_pane():
     print("FLOW 8 OK: log pane toggle + auto-open on errors")
 
 
+async def flow_wizard_audio_and_details():
+    st = fresh()
+    # --- wizard on first run, Esc skips ---
+    app = MicApp(st, wizard=True)
+    async with app.run_test(size=(110, 32)) as pilot:
+        assert type(app.screen).__name__ == "Wizard"
+        await pilot.press("escape")
+        await pilot.pause()
+        assert type(app.screen).__name__ != "Wizard"
+        assert app.current_view == "home"
+    # --- threshold tuner ---
+    app = MicApp(fresh())
+    async with app.run_test(size=(110, 32)) as pilot:
+        before = st.get("silence_level", 1000)
+        app._tune_threshold(250)          # 1000 -> 1250
+        app._tune_threshold(-2000)        # 1250 -> clamps at 100
+        await pilot.pause()
+        assert app.settings["silence_level"] == 100, app.settings
+        app._tune_threshold(900)          # 100 -> 1000
+        await pilot.pause()
+        assert app.settings["silence_level"] == 1000
+        thr = str(app.query_one("#thr-val").render())
+        assert "1000" in thr, thr
+        # --- provider detail panel reacts to highlight ---
+        await pilot.press("3")
+        app.query_one("#provider-list").highlighted = 1
+        await pilot.pause(0.3)
+        detail = str(app.query_one("#provider-detail").render())
+        assert "proxy" in detail.lower() and "gemini" in detail.lower(), detail[:120]
+    print("FLOW 11 OK: wizard skip + threshold tuner + provider detail")
+
+
 async def flow_progress_reporting():
     st = fresh()
     app = MicApp(st)
@@ -275,6 +332,7 @@ async def main():
     await flow_radio_check()
     await flow_dashboard_and_escape()
     await flow_log_pane()
+    await flow_wizard_audio_and_details()
     await flow_progress_reporting()
     # start-autosave last: exits the app
     import settings as settings_module

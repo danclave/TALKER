@@ -19,13 +19,19 @@ AUDIO_FILE = "talker_test_audio.ogg"
 GRACE_SECONDS = 5
 
 
-def run_test(app_settings, status=None, stop_requested=None, on_recording=None):
+def run_test(app_settings, status=None, stop_requested=None, on_recording=None,
+             on_level=None):
     """Record from the mic and transcribe with the selected provider/settings.
 
     status:         callable(str) receiving live progress lines (default: print)
     stop_requested: callable() -> bool - stop recording early when it returns True
     on_recording:   callable(bool) - fired with True when recording starts,
                     False when it ends (for visual indicators)
+    on_level:       callable(level_pct, silence_remaining, elapsed) - fired
+                    ~20x/s while recording, for the live audio level meter.
+                    level_pct: 0-100 normalized so the silence threshold is 50.
+                    silence_remaining: seconds until silence auto-stop (None
+                    when the input is above the threshold).
     Returns the transcription text ('' on failure).
     """
     say = status or (lambda msg: print(msg))
@@ -52,19 +58,37 @@ def run_test(app_settings, status=None, stop_requested=None, on_recording=None):
     if not prepare_model(app_settings, report=_report):
         say("[WARN] model/proxy not ready - transcription may fail")
 
-    recorder = Recorder(AUDIO_FILE)
+    silence_level = app_settings.get("silence_level", 1000)
+    recorder = Recorder(AUDIO_FILE,
+                        silence_level=silence_level,
+                        device=app_settings.get("input_device"))
     say("recording... speak now (stops after ~2s of silence)")
     if on_recording:
         on_recording(True)
     t0 = time.perf_counter()
+
+    def _tick():
+        if on_level is None:
+            return
+        try:
+            level = recorder.get_level() or 0.0
+            # normalize: silence threshold sits at 50% of the meter
+            pct = min(100, int(100 * level / max(1, silence_level * 2)))
+            remaining = recorder.get_silence_remaining()
+            on_level(pct, remaining, time.perf_counter() - t0)
+        except Exception:
+            pass
+
     recorder.start_recording(silence_grace_period=GRACE_SECONDS)
     try:
         while recorder.is_recording():
+            _tick()
             if stop_requested and stop_requested():
                 recorder.stop_recording()
                 say("stop requested - recording ended")
                 break
-            time.sleep(0.1)
+            time.sleep(0.05)
+        _tick()
     finally:
         if on_recording:
             on_recording(False)

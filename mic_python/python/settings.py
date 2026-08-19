@@ -41,6 +41,8 @@ DEFAULT_SETTINGS = {
     "gemini_models": ["gemini/gemini-3.5-flash-lite", "gemini/gemini-3.1-flash-lite"],
     "custom_models": [],  # user-defined chain for the custom provider
     "vosk_model_overrides": {},  # language code -> chosen model name (non-default)
+    "input_device": None,  # microphone device index (None = system default)
+    "silence_level": 1000,  # mic level below this counts as silence
 }
 
 VALID_PROVIDERS = list(PROVIDERS) + ["whisper_api"]
@@ -71,6 +73,12 @@ def load_settings():
     if not isinstance(custom, list):
         custom = []
     settings["custom_models"] = [m for m in custom if isinstance(m, str) and m.strip()]
+    if not isinstance(settings.get("input_device"), int):
+        settings["input_device"] = None
+    try:
+        settings["silence_level"] = max(100, min(8000, int(settings.get("silence_level", 1000))))
+    except (TypeError, ValueError):
+        settings["silence_level"] = 1000
     overrides = settings.get("vosk_model_overrides")
     if not isinstance(overrides, dict):
         overrides = {}

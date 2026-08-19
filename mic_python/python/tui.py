@@ -1,12 +1,20 @@
 # tui.py
-# Textual TUI for the TALKER mic app, styled after the in-game PDA:
-# green-on-dark LCD, flat numbered menu, status dots, dashboard home,
-# collapsible diagnostics log, radio check with REC indicator.
+# Textual TUI for the TALKER mic app - "TALKER PDA v2"
+# Everything the user can see was redesigned around the in-game PDA:
+#   - custom status bar (device icons: mic, proxy signal, disk, clock)
+#   - framed LCD screen with a flat numbered menu + readiness dots
+#   - dashboard home with status cards and a hero GO LIVE
+#   - Radio Check with a live audio level meter, silence countdown,
+#     elapsed timer, big "heard" result panel and session history
+#   - audio settings: microphone picker + silence threshold tuner
+#   - first-run wizard, provider detail panel, per-size download button
+#   - F12 diagnostics pane (auto-opens on warnings)
 
 import inspect
 import logging
 import threading
 from collections import deque
+from datetime import datetime
 
 from rich import box
 from rich.console import Group
@@ -21,8 +29,8 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.reactive import reactive
 from textual.screen import ModalScreen
 from textual.widgets import (
-    Button, ContentSwitcher, Footer, Header, Input, Label, ListItem, ListView,
-    OptionList, ProgressBar, RichLog, Static, Tree,
+    Button, ContentSwitcher, Footer, Input, Label, ListItem, ListView,
+    OptionList, ProgressBar, RichLog, Static,
 )
 from textual.widgets.option_list import Option
 
@@ -58,22 +66,35 @@ VIEWS = [
 ]
 VIEW_KEYS = [k for k, _ in VIEWS]
 
+PINNED_LANGS = ["en", "en-gb", "ru", "uk", "pl", "es"]
+
 CSS = f"""
 Screen {{
     background: {BG};
     color: {TEXT};
 }}
-Header {{
+
+/* ============ status bar ============ */
+#topbar {{
+    height: 1;
     background: {CHROME};
     color: {TEXT};
-    border-bottom: solid {BORDER};
+    padding: 0 1;
 }}
-Footer {{
-    background: {CHROME};
+#topbar-left {{ width: auto; color: {ACCENT}; text-style: bold; }}
+#topbar-mid {{ width: 1fr; content-align: center middle; color: {MUTED}; }}
+#topbar-right {{ width: auto; color: {MUTED}; }}
+
+/* ============ frame ============ */
+#frame {{
+    border: round {BORDER};
+    padding: 0;
+    margin: 0 1;
+    height: 1fr;
 }}
 #main {{ height: 1fr; }}
 
-/* ---------- sidebar: the PDA menu ---------- */
+/* ============ sidebar ============ */
 #sidebar {{
     width: 34;
     min-width: 28;
@@ -92,11 +113,15 @@ Footer {{
     color: {MUTED};
     margin-bottom: 1;
 }}
+.sidebar-section {{
+    color: {BORDER};
+    text-style: bold;
+    margin-top: 1;
+}}
 ListView {{
     background: transparent;
     padding: 0;
     height: auto;
-    margin-bottom: 1;
 }}
 ListView > ListItem {{
     padding: 0 1;
@@ -112,9 +137,11 @@ ListView:focus > ListItem.-highlighted {{
 #setup-strip, #cache-strip {{
     color: {MUTED};
     margin-top: 1;
+    border-left: solid {BORDER};
+    padding-left: 1;
 }}
 
-/* ---------- content ---------- */
+/* ============ content ============ */
 #contentwrap {{
     padding: 1 2 0 2;
 }}
@@ -125,11 +152,10 @@ Static.hint, Label.hint {{ color: {MUTED}; margin-bottom: 1; }}
     color: {ACCENT};
     text-style: bold;
     border-bottom: solid {BORDER};
-    padding-bottom: 0;
     margin-bottom: 1;
 }}
 
-/* ---------- dashboard ---------- */
+/* ============ dashboard ============ */
 #dash-cards {{ height: auto; margin-bottom: 1; }}
 Button.card {{
     width: 1fr;
@@ -143,30 +169,36 @@ Button.card {{
     margin: 0 1 0 0;
 }}
 Button.card:hover {{ border: solid {ACCENT}; }}
-Button.card .card-k {{
-    color: {MUTED};
-}}
 #dash-actions {{ height: auto; margin-top: 1; }}
 #btn-start {{
     background: {ACCENT_DIM};
     color: {ACCENT};
     text-style: bold;
     border: solid {ACCENT};
-    min-width: 24;
+    min-width: 30;
     height: 3;
 }}
 #dash-note {{ color: {MUTED}; margin-top: 1; }}
 
-/* ---------- radio check ---------- */
-#test {{
-    border: round {BORDER};
-    padding: 0 1;
+/* ============ radio check ============ */
+#test {{ border: none; padding: 0 1; }}
+#test.recording {{ border: none; }}
+#meter-row {{ height: 1; margin-bottom: 1; }}
+#meter {{
+    width: 1fr;
+    color: {ACCENT};
+    background: {BORDER_DIM};
 }}
-#test.recording {{ border: round {BAD}; }}
-#test-statusline {{ height: 1; margin-bottom: 1; }}
-#rec-badge {{ width: 8; color: {MUTED}; }}
-#rec-badge.on {{ color: {BAD}; text-style: bold; }}
-#test-status {{ color: {MUTED}; }}
+#meter-status {{ width: auto; color: {MUTED}; }}
+#heard-panel {{
+    border: round {BORDER};
+    padding: 1 2;
+    height: auto;
+    min-height: 3;
+    margin-bottom: 1;
+}}
+#heard-panel.filled {{ border: round {ACCENT}; }}
+#history {{ color: {MUTED}; margin-bottom: 1; }}
 .logbox {{
     border: round {BORDER};
     padding: 1;
@@ -174,37 +206,65 @@ Button.card .card-k {{
     color: {TEXT};
 }}
 ProgressBar {{ margin-bottom: 1; grid-size: 1; }}
+#test-statusline {{ height: 1; margin-bottom: 1; }}
+#rec-badge {{ width: 8; color: {MUTED}; }}
+#rec-badge.on {{ color: {BAD}; text-style: bold; }}
+#test-status {{ color: {MUTED}; }}
 
-/* ---------- inputs & lists ---------- */
+/* ============ audio settings ============ */
+#audio-settings {{
+    border: round {BORDER};
+    padding: 1;
+    margin-bottom: 1;
+    height: auto;
+}}
+#audio-settings Label.section {{ color: {ACCENT}; text-style: bold; }}
+#device-list {{ border: solid {BORDER}; margin-bottom: 1; }}
+#thr-row {{ height: 3; }}
+#thr-val {{ width: auto; color: {ACCENT}; text-style: bold; padding: 1 1; }}
+
+/* ============ inputs & lists ============ */
 Input, OptionList {{
     border: solid {BORDER};
     margin-bottom: 1;
 }}
 Input:focus, OptionList:focus {{ border: solid {ACCENT}; }}
 
-/* ---------- buttons ---------- */
+/* ============ buttons ============ */
 Button {{ margin-right: 1; margin-bottom: 1; }}
 Button.-primary {{ border: solid {ACCENT}; }}
 Button.-warning {{ border: solid {AMBER}; }}
 Button.-error {{ border: solid {BAD}; }}
+Button.small {{ height: 3; min-width: 8; }}
 
-/* ---------- proxy status lines ---------- */
+/* ============ provider detail ============ */
+#provider-detail {{
+    border: round {BORDER};
+    padding: 1;
+    margin-top: 1;
+    color: {TEXT};
+    height: auto;
+    min-height: 6;
+}}
+
+/* ============ proxy lines ============ */
 .proxy-line {{ color: {MUTED}; margin-bottom: 1; }}
 .proxy-line.ok {{ color: {ACCENT}; }}
 .proxy-line.bad {{ color: {BAD}; }}
 
-/* ---------- modals ---------- */
+/* ============ modals ============ */
 ModalScreen {{ align: center middle; background: {BG} 85%; }}
 .modalbox {{
-    width: 62%;
-    max-width: 90;
+    width: 64%;
+    max-width: 92;
     background: {PANEL};
     border: solid {ACCENT};
     padding: 1 2;
 }}
 HelpBody {{ color: {TEXT}; }}
+.wizard-step {{ height: auto; }}
 
-/* ---------- diagnostics log pane ---------- */
+/* ============ diagnostics log pane ============ */
 #logpane {{
     height: 14;
     dock: bottom;
@@ -215,22 +275,39 @@ HelpBody {{ color: {TEXT}; }}
 }}
 #logpane-label {{ color: {RUST}; width: auto; }}
 #applog {{ border: none; height: 1fr; }}
+
+Footer {{ background: {CHROME}; }}
 """
 
 
+def _lang_sort_key(code):
+    """Order: whisper-supported languages first, vosk-only last."""
+    return (0 if whisper_supported(code) else 1, LANGUAGES[code].lower())
+
+
+def _language_codes():
+    """pinned -> whisper-supported (alphabetical) -> vosk-only (alphabetical)."""
+    rest = [c for c in language_display_order() if c not in PINNED_LANGS]
+    rest.sort(key=_lang_sort_key)
+    return list(PINNED_LANGS) + rest
+
+
 def _lang_tag(code, overrides=None):
-    info = vosk_model_info(code)
-    if info:
-        tag = f"vosk ~{info[1]} MB"
-        if info[1] >= VOSK_BIG_MB:
-            tag += " BIG"
-        if len(vosk_model_options(code)) > 1:
-            tag += f",{len(vosk_model_options(code))} models"
-        if overrides and overrides.get(code):
-            tag += f" - {overrides[code]}"
+    """Compact engine tag. Sizes only for BIG vosk models."""
+    has_vosk = vosk_model_info(code) is not None
+    has_whisper = whisper_supported(code)
+    if has_whisper and has_vosk:
+        tag = "whisper + vosk"
+    elif has_whisper:
+        tag = "whisper"
     else:
-        tag = "no vosk"
-    return f"{tag} | {'whisper' if whisper_supported(code) else 'no whisper'}"
+        tag = "vosk only"
+    info = vosk_model_info(code)
+    if info and info[1] >= VOSK_BIG_MB:
+        tag += f"  ~{info[1]} MB BIG"
+    if overrides and overrides.get(code):
+        tag += f" - {overrides[code]}"
+    return tag
 
 
 # ---------------------------------------------------------------- log capture
@@ -276,7 +353,8 @@ class HelpModal(ModalScreen):
             Text(" "),
             t,
             Text(" "),
-            Text("Local models cache on disk - manage them in Model Manager.", style=MUTED),
+            Text("Radio Check shows your live mic level and the silence "
+                 "threshold - use it to debug auto-stop.", style=MUTED),
             Text("stalkers speak. the zone listens.", style=RUST),
         )
         yield Static(Panel(body, title="[accent]HELP[/]", title_align="left",
@@ -332,12 +410,89 @@ class ModelPickModal(ModalScreen):
         self.dismiss(None)
 
 
+class Wizard(ModalScreen):
+    """First-run setup: language -> provider -> optional radio check."""
+
+    BINDINGS = [Binding("escape", "skip", "Skip", show=False),
+                Binding("right", "next", "Next", show=False),
+                Binding("left", "back", "Back", show=False)]
+
+    def __init__(self, settings: dict):
+        super().__init__()
+        self.settings = settings
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="modalbox"):
+            yield Static("TALKER PDA - first-time setup", classes="HelpBody")
+            yield Static("Pick your language, then a provider. Esc skips to the "
+                         "dashboard anytime.", classes="HelpBody")
+            yield Label("1. Language", classes="sidebar-section")
+            yield Input(placeholder="filter... (pinned shown first)",
+                        id="wizard-lang-filter")
+            yield OptionList(*self._lang_options(""), id="wizard-lang-list")
+            yield Label("2. Provider", classes="sidebar-section")
+            yield OptionList(*[
+                Option(desc, id=key) for key, desc in PROVIDERS.items()
+            ], id="wizard-provider-list")
+            with Horizontal():
+                yield Button("Finish setup", id="wizard-finish", variant="primary")
+                yield Button("Skip - use defaults", id="wizard-skip")
+
+    @staticmethod
+    def _lang_options(query: str):
+        q = query.lower()
+        codes = _language_codes()
+        if q:
+            codes = [c for c in codes if q in LANGUAGES[c].lower() or q in c]
+        return [Option(f"{LANGUAGES[c]} ({c})", id=f"lang:{c}") for c in codes[:40]] \
+            or [Option("(no match)")]
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id == "wizard-lang-filter":
+            ol = self.query_one("#wizard-lang-list", OptionList)
+            ol.clear_options()
+            ol.add_options(self._lang_options(event.value))
+
+    def _picked_language(self):
+        ol = self.query_one("#wizard-lang-list", OptionList)
+        idx = ol.highlighted
+        options = [(getattr(o, "id", "") or "") for o in ol._options]
+        if idx is not None and 0 <= idx < len(options):
+            picked = options[idx]
+            if picked.startswith("lang:"):
+                return picked[5:]
+        return None
+
+    def _picked_provider(self):
+        ol = self.query_one("#wizard-provider-list", OptionList)
+        idx = ol.highlighted
+        ids = [(getattr(o, "id", "") or "") for o in ol._options]
+        if idx is not None and 0 <= idx < len(ids) and ids[idx] in PROVIDERS:
+            return ids[idx]
+        return None
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "wizard-finish":
+            lang = self._picked_language()
+            provider = self._picked_provider()
+            self.dismiss({"language": lang, "provider": provider})
+        elif event.button.id == "wizard-skip":
+            self.dismiss(None)
+
+    def action_skip(self) -> None:
+        self.dismiss(None)
+
+    def action_next(self) -> None:
+        self.query_one("#wizard-provider-list", OptionList).focus()
+
+    def action_back(self) -> None:
+        self.query_one("#wizard-lang-filter", Input).focus()
+
+
 # ---------------------------------------------------------------- app
 class MicApp(App):
     CSS = CSS
     TITLE = "TALKER PDA"
-    SUB_TITLE = "zone comms"
-
     BINDINGS = [
         Binding("q", "quit_service", "Quit"),
         Binding("s", "save", "Save"),
@@ -359,142 +514,254 @@ class MicApp(App):
     recording = reactive(False)
     _test_stop = None          # threading.Event while a radio check runs
 
-    def __init__(self, settings: dict, test_func=None):
+    def __init__(self, settings: dict, test_func=None, wizard=False):
         super().__init__()
         self.settings = settings
         self._test_func = test_func
-        self._gem_order = []            # display order of gemini candidates
-        self._custom_order = []         # display order of custom models
+        self._gem_order = []
+        self._custom_order = []
         self._mgr_focus = "vosk"
         self._dirty = False
         self._rec_blink = True
-        self._proxy_ok = None           # None = unknown, True/False after ping
+        self._proxy_ok = None
         self._log_buf = deque(maxlen=500)
         self._log_handler = None
+        self._history = deque(maxlen=20)   # (time, provider, text, seconds)
+        self._wizard = wizard
+        self._devices = []                 # [(index, name)] input devices
 
     # =======================================================================
     # LAYOUT
     # =======================================================================
     def compose(self) -> ComposeResult:
-        yield Header(show_clock=False)
-        with Horizontal(id="main"):
-            with Vertical(id="sidebar"):
-                yield Label("TALKER PDA", id="pda-title")
-                yield Label("zone comms console", id="pda-sub")
-                yield ListView(id="nav")
-                yield Static(self._setup_strip(), id="setup-strip")
-                yield Static(self._cache_strip(), id="cache-strip")
-            with Vertical(id="contentwrap"):
-                with ContentSwitcher(id="content"):
-                    with VerticalScroll(id="home", classes="pane"):
-                        yield Static(self._dash_header(), classes="pane-title",
-                                     id="home-title")
-                        yield Static(HOME_INTRO_TEXT, classes="hint", id="home-intro")
-                        with Horizontal(id="dash-cards"):
-                            yield Button(self._card_provider(), id="card-provider",
-                                         classes="card")
-                            yield Button(self._card_language(), id="card-language",
-                                         classes="card")
-                            yield Button(self._card_model(), id="card-model",
-                                         classes="card")
-                        with Horizontal(id="dash-actions"):
-                            yield Button("GO LIVE - start mic service", id="btn-start",
-                                         variant="primary")
-                            yield Button("Save settings", id="btn-save")
-                            yield Button("Radio check", id="btn-dash-test")
-                        yield Static("On GO LIVE: settings are stashed and the selected "
-                                     "model is prepared (downloads on first use).",
-                                     id="dash-note")
-                    with Vertical(id="test", classes="pane"):
-                        yield Static("Radio Check - tests your mic + model with the "
-                                     "current settings", classes="pane-title")
-                        yield Label("Press Start, then speak. Recording stops after "
-                                    "~2s of silence - or press Stop.", classes="hint")
-                        with Horizontal(id="test-statusline"):
-                            yield Static("o idle", id="rec-badge")
-                            yield Static("", id="test-status")
-                        yield RichLog(id="test-log", classes="logbox", wrap=True,
-                                      markup=False, max_lines=500)
-                        yield ProgressBar(id="test-progress", show_eta=False, total=100)
-                        with Horizontal():
-                            yield Button("Start radio check", id="test-start",
-                                         variant="primary")
-                            yield Button("Stop recording", id="test-stop",
-                                         variant="warning", disabled=True)
-                    with VerticalScroll(id="provider", classes="pane"):
-                        yield Static("Provider - who transcribes your voice",
-                                     classes="pane-title")
-                        yield Label("Whisper is the recommended offline choice. Gemini "
-                                    "and Custom need the API proxy running.",
-                                    classes="hint")
-                        yield OptionList(*self._provider_options(), id="provider-list")
-                    with Vertical(id="language", classes="pane"):
-                        yield Static("Language - pinned first, type to filter",
-                                     classes="pane-title")
-                        yield Input(placeholder="filter languages...  (/ to focus)",
-                                    id="lang-filter")
-                        yield OptionList(*self._language_options(""), id="lang-list")
-                    with VerticalScroll(id="whisper", classes="pane"):
-                        yield Static("Whisper Size", classes="pane-title")
-                        yield Label("Cached models are marked and start instantly; "
-                                    "others download once on first use.", classes="hint")
-                        yield OptionList(*self._whisper_options(), id="whisper-list")
-                    with Vertical(id="gemini", classes="pane"):
-                        yield Static("Gemini Chain - tried top to bottom",
-                                     classes="pane-title")
-                        yield Label("Requires the API proxy with Gemini API key(s) "
-                                    "configured.", classes="hint")
-                        yield Static(self._proxy_line(), id="gemini-proxy-line",
-                                     classes="proxy-line")
-                        yield OptionList(*self._gemini_options(), id="gemini-list")
-                        with Horizontal():
-                            yield Button("Toggle on/off", id="gem-toggle")
-                            yield Button("Move up", id="gem-up")
-                            yield Button("Move down", id="gem-down")
-                    with Vertical(id="custom", classes="pane"):
-                        yield Static("Custom Models - your own fallback chain",
-                                     classes="pane-title")
-                        yield Label("Advanced: any audio-capable model on your proxy, "
-                                    "format provider/modelname "
-                                    "(e.g. gemini/gemini-3.5-flash-lite).",
-                                    classes="hint")
-                        yield Static(self._proxy_line(), id="custom-proxy-line",
-                                     classes="proxy-line")
-                        yield Input(placeholder="provider/modelname and press Enter",
-                                    id="custom-input")
-                        yield OptionList(*self._custom_options(), id="custom-list")
-                        with Horizontal():
-                            yield Button("Add", id="custom-add", variant="primary")
-                            yield Button("Toggle on/off", id="custom-toggle")
-                            yield Button("Move up", id="custom-up")
-                            yield Button("Move down", id="custom-down")
-                            yield Button("Delete", id="custom-delete", variant="error")
-                    with VerticalScroll(id="manager", classes="pane"):
-                        yield Static("Model Manager - local models on disk",
-                                     classes="pane-title")
-                        yield Static("", id="mgr-location", classes="hint")
-                        yield OptionList(*self._mgr_vosk_options(), id="mgr-vosk")
-                        yield OptionList(*self._mgr_whisper_options(), id="mgr-whisper")
-                        with Horizontal():
-                            yield Button("Delete selected", id="mgr-delete",
-                                         variant="error")
-                            yield Button("Refresh", id="mgr-refresh")
+        with Horizontal(id="topbar"):
+            yield Static("TALKER PDA v2", id="topbar-left")
+            yield Static("", id="topbar-mid")
+            yield Static("", id="topbar-right")
+        with Vertical(id="frame"):
+            with Horizontal(id="main"):
+                with Vertical(id="sidebar"):
+                    yield Label("TALKER PDA", id="pda-title")
+                    yield Label("zone comms console", id="pda-sub")
+                    yield Label("NAVIGATION", classes="sidebar-section")
+                    yield ListView(id="nav")
+                    yield Static(self._setup_strip(), id="setup-strip")
+                    yield Static(self._cache_strip(), id="cache-strip")
+                with Vertical(id="contentwrap"):
+                    with ContentSwitcher(id="content"):
+                        with VerticalScroll(id="home", classes="pane"):
+                            yield Static("Dashboard", classes="pane-title",
+                                         id="home-title")
+                            yield Static(HOME_INTRO_TEXT, classes="hint", id="home-intro")
+                            with Horizontal(id="dash-cards"):
+                                yield Button(self._card_provider(), id="card-provider",
+                                             classes="card")
+                                yield Button(self._card_language(), id="card-language",
+                                             classes="card")
+                                yield Button(self._card_model(), id="card-model",
+                                             classes="card")
+                            with Horizontal(id="dash-actions"):
+                                yield Button("GO LIVE - start mic service",
+                                             id="btn-start", variant="primary")
+                                yield Button("Save settings", id="btn-save")
+                                yield Button("Radio check", id="btn-dash-test")
+                            yield Static("On GO LIVE: settings are stashed and the "
+                                         "selected model is prepared (downloads on "
+                                         "first use).", id="dash-note")
+                        with Vertical(id="test", classes="pane"):
+                            yield Static("Radio Check", classes="pane-title")
+                            yield Label("Press Start, then speak. The meter shows "
+                                        "your live mic level; recording stops when "
+                                        "it stays left of the threshold mark.",
+                                        classes="hint")
+                            with Horizontal(id="test-statusline"):
+                                yield Static("o idle", id="rec-badge")
+                                yield Static("", id="test-status")
+                            with Horizontal(id="meter-row"):
+                                yield Static(self._meter_render(0), id="meter")
+                                yield Static("0.0s", id="meter-status")
+                            yield RichLog(id="test-log", classes="logbox", wrap=True,
+                                          markup=False, max_lines=300)
+                            yield ProgressBar(id="test-progress", show_eta=False,
+                                              total=100)
+                            yield Static(self._heard_render(None, None),
+                                         id="heard-panel")
+                            yield Static("", id="history")
+                            with Horizontal():
+                                yield Button("Start radio check", id="test-start",
+                                             variant="primary")
+                                yield Button("Stop recording", id="test-stop",
+                                             variant="warning", disabled=True)
+                            with Vertical(id="audio-settings"):
+                                yield Label("AUDIO - microphone & silence threshold",
+                                            classes="section")
+                                yield OptionList(id="device-list")
+                                with Horizontal(id="thr-row"):
+                                    yield Button("-", id="thr-down",
+                                                 classes="small")
+                                    yield Static(
+                                        f"threshold {self.settings.get('silence_level', 1000)}",
+                                        id="thr-val")
+                                    yield Button("+", id="thr-up",
+                                                 classes="small")
+                                    yield Label("sensitivity: higher = mic must be "
+                                                "louder to count as speech",
+                                                classes="hint")
+                        with VerticalScroll(id="provider", classes="pane"):
+                            yield Static("Provider", classes="pane-title")
+                            yield Label("Whisper is the recommended offline choice. "
+                                        "Gemini and Custom need the API proxy "
+                                        "running.", classes="hint")
+                            yield OptionList(*self._provider_options(),
+                                             id="provider-list")
+                            yield Static(self._provider_detail(None),
+                                         id="provider-detail")
+                        with Vertical(id="language", classes="pane"):
+                            yield Static("Language", classes="pane-title")
+                            yield Label("Pinned first, then everything else. "
+                                        "Whisper-capable languages come before "
+                                        "vosk-only ones.", classes="hint")
+                            yield Input(placeholder="filter languages...  (/ to focus)",
+                                        id="lang-filter")
+                            yield OptionList(*self._language_options(""),
+                                             id="lang-list")
+                        with VerticalScroll(id="whisper", classes="pane"):
+                            yield Static("Whisper Size", classes="pane-title")
+                            yield Label("Cached models start instantly; others "
+                                        "download once.", classes="hint")
+                            yield OptionList(*self._whisper_options(),
+                                             id="whisper-list")
+                            with Horizontal():
+                                yield Button("Download / preload highlighted",
+                                             id="whisper-download")
+                        with Vertical(id="gemini", classes="pane"):
+                            yield Static("Gemini Chain - tried top to bottom",
+                                         classes="pane-title")
+                            yield Label("Requires the API proxy with Gemini API "
+                                        "key(s) configured.", classes="hint")
+                            yield Static(self._proxy_line(), id="gemini-proxy-line",
+                                         classes="proxy-line")
+                            yield OptionList(*self._gemini_options(),
+                                             id="gemini-list")
+                            with Horizontal():
+                                yield Button("Toggle on/off", id="gem-toggle")
+                                yield Button("Move up", id="gem-up")
+                                yield Button("Move down", id="gem-down")
+                        with Vertical(id="custom", classes="pane"):
+                            yield Static("Custom Models - your own fallback chain",
+                                         classes="pane-title")
+                            yield Label("Advanced: any audio-capable model on your "
+                                        "proxy, format provider/modelname "
+                                        "(e.g. gemini/gemini-3.5-flash-lite).",
+                                        classes="hint")
+                            yield Static(self._proxy_line(), id="custom-proxy-line",
+                                         classes="proxy-line")
+                            yield Input(placeholder="provider/modelname and press Enter",
+                                        id="custom-input")
+                            yield OptionList(*self._custom_options(),
+                                             id="custom-list")
+                            with Horizontal():
+                                yield Button("Add", id="custom-add", variant="primary")
+                                yield Button("Move up", id="custom-up")
+                                yield Button("Move down", id="custom-down")
+                                yield Button("Delete", id="custom-delete",
+                                             variant="error")
+                        with VerticalScroll(id="manager", classes="pane"):
+                            yield Static("Model Manager - local models on disk",
+                                         classes="pane-title")
+                            yield Static("", id="mgr-location", classes="hint")
+                            yield OptionList(*self._mgr_vosk_options(), id="mgr-vosk")
+                            yield OptionList(*self._mgr_whisper_options(),
+                                             id="mgr-whisper")
+                            with Horizontal():
+                                yield Button("Delete selected", id="mgr-delete",
+                                             variant="error")
+                                yield Button("Refresh", id="mgr-refresh")
         with Vertical(id="logpane"):
             yield Label("DIAGNOSTICS - talker.log", id="logpane-label")
             yield RichLog(id="applog", markup=False, wrap=True, max_lines=500)
         yield Footer()
 
     def on_mount(self) -> None:
+        frame = self.query_one("#frame")
+        frame.border_title = "TALKER PDA"
+        frame.border_subtitle = "v2"
         self.query_one("#content", ContentSwitcher).current = "home"
         self._refresh_nav()
         self._refresh_manager()
-        # diagnostics capture
         self._log_handler = _RingHandler(self._log_buf)
         logging.getLogger().addHandler(self._log_handler)
-        # periodic jobs
         self.set_interval(0.6, self._blink_rec)
         self.set_interval(0.5, self._drain_logs)
+        self.set_interval(1.0, self._tick_clock)
+        self._tick_clock()
         self._ping_proxy()
+        self._list_devices()
+        if self._wizard:
+            self.push_screen(Wizard(self.settings), self._wizard_done)
+
+    def _wizard_done(self, result):
+        if result:
+            if result.get("language"):
+                self.settings["language"] = result["language"]
+            if result.get("provider"):
+                self.settings["provider"] = result["provider"]
+            self._mark_dirty()
+            self._refresh_dashboard()
+            try:
+                self.notify("setup applied - run a Radio Check to test",
+                            title="welcome")
+            except Exception:
+                pass
+
+    # =======================================================================
+    # STATUS BAR
+    # =======================================================================
+    def _tick_clock(self) -> None:
+        try:
+            right = self.query_one("#topbar-right", Static)
+            disk_mb = (sum(e[2] for e in models_manager.list_vosk_models()) +
+                       sum(e[2] for e in models_manager.list_whisper_models()))
+            proxy_icon = "?" if self._proxy_ok is None else \
+                ("|||" if self._proxy_ok else " x ")
+            needed = self._proxy_needed()
+            proxy_part = f" proxy {proxy_icon}" if needed else ""
+            right.update(Text.assemble(
+                ("mic ", "dim"),
+                (self._mic_icon(), ACCENT if self._mic_ready() else AMBER),
+                (proxy_part + "   disk ", "dim"),
+                (f"~{disk_mb} MB", TEXT),
+                ("   ", "dim"),
+                (datetime.now().strftime("%H:%M"), TEXT),
+            ))
+            mid = self.query_one("#topbar-mid", Static)
+            p = self.settings["provider"]
+            model = self._current_model_label()
+            mid.update(f"{p.replace('_', ' ')}  |  {model}  |  "
+                       f"{LANGUAGES.get(self.settings['language'], '')}")
+        except Exception:
+            pass
+
+    def _mic_icon(self) -> str:
+        return "O" if self._mic_ready() else "-"
+
+    def _mic_ready(self) -> bool:
+        return self._ready_map().get("test", False)
+
+    def _proxy_needed(self) -> bool:
+        return self.settings["provider"] in ("gemini_proxy", "custom_proxy")
+
+    def _current_model_label(self) -> str:
+        p = self.settings["provider"]
+        if p == "whisper_local":
+            return f"whisper {self.settings['whisper_model']}"
+        if p == "gemini_proxy":
+            return " -> ".join(m.split("/")[-1] for m in self.settings["gemini_models"])
+        if p == "custom_proxy":
+            n = len(self.settings.get("custom_models") or [])
+            return f"{n} custom model(s)"
+        info = vosk_model_info(self.settings["language"])
+        return f"vosk {info[0]}" if info else "vosk"
 
     # =======================================================================
     # SIDEBAR / NAV
@@ -503,7 +770,6 @@ class MicApp(App):
         p = self.settings["provider"]
         lang = self.settings["language"]
         ready = {k: True for k in VIEW_KEYS}
-        # radio check readiness = current provider's model state
         if p == "whisper_local":
             size = self.settings["whisper_model"]
             ready["test"] = models_manager.whisper_model_cached(size)
@@ -526,13 +792,17 @@ class MicApp(App):
         index = nav.index
         nav.clear()
         for i, (key, label) in enumerate(VIEWS):
-            dot = "[green]o[/]" if ready.get(key) else f"[{AMBER}]-[/]"
-            marker = " <<" if key == self.current_view else ""
-            nav.append(ListItem(Static(
-                Text.assemble((f"{i + 1} ", "dim"), (label, ""), (marker, "bold")))))
-        if index is not None and 0 <= index < len(VIEWS):
-            nav.index = index
+            ok = ready.get(key)
+            dot = "[green]O[/]" if ok else f"[{AMBER}]-[/]"
+            row = Text.assemble((f"{i + 1} ", "dim"),
+                                (dot + " ", ""),
+                                (label, ""))
+            nav.append(ListItem(Static(row)))
+        if index is None or not (0 <= index < len(VIEWS)):
+            index = VIEW_KEYS.index(self.current_view)
+        nav.index = index
         self._refresh_strips()
+        self._tick_clock()
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         if event.list_view.index is not None and 0 <= event.list_view.index < len(VIEWS):
@@ -589,8 +859,36 @@ class MicApp(App):
         if self._proxy_ok is None:
             return Text("? proxy: checking...")
         if self._proxy_ok:
-            return Text("o proxy: reachable")
-        return Text("x proxy: NOT reachable - start it and press r to recheck")
+            return Text("O proxy: reachable")
+        return Text("x proxy: NOT reachable - start it, then Refresh in Model Manager")
+
+    # =======================================================================
+    # DEVICE PICKER
+    # =======================================================================
+    @work(thread=True, group="devices", exclusive=True)
+    def _list_devices(self) -> None:
+        try:
+            import sounddevice as sd
+            devices = [(i, d["name"]) for i, d in enumerate(sd.query_devices())
+                       if d.get("max_input_channels", 0) > 0]
+        except Exception as e:
+            logging.warning("Could not list input devices: %s", e)
+            devices = []
+        self.call_from_thread(self._apply_devices, devices)
+
+    def _apply_devices(self, devices) -> None:
+        self._devices = devices
+        try:
+            ol = self.query_one("#device-list", OptionList)
+            ol.clear_options()
+            rows = [Option("Default microphone", id="dev:none")]
+            current = self.settings.get("input_device")
+            for idx, name in devices:
+                marker = "  *" if current == idx else ""
+                rows.append(Option(f"{idx}: {name}{marker}", id=f"dev:{idx}"))
+            ol.add_options(rows)
+        except Exception:
+            pass
 
     # =======================================================================
     # SIDEBAR STRIPS / DASHBOARD
@@ -599,12 +897,7 @@ class MicApp(App):
         s = self.settings
         lines = [f"{s['provider'].replace('_', ' ')}  ·  "
                  f"{LANGUAGES.get(s['language'], s['language'])} ({s['language']})"]
-        if s["provider"] == "whisper_local":
-            lines.append(f"whisper {s['whisper_model']}")
-        if s["provider"] == "gemini_proxy":
-            lines.append(" -> ".join(m.split("/")[-1] for m in s["gemini_models"]))
-        if s["provider"] == "custom_proxy":
-            lines.append(" -> ".join(s.get("custom_models") or []) or "(no models yet)")
+        lines.append(self._current_model_label())
         override = (s.get("vosk_model_overrides") or {}).get(s["language"])
         if override:
             lines.append(f"vosk: {override}")
@@ -617,7 +910,7 @@ class MicApp(App):
         whisper = len(models_manager.list_whisper_models())
         total = sum(e[2] for e in models_manager.list_vosk_models()) + \
             sum(e[2] for e in models_manager.list_whisper_models())
-        return Text(f"on disk: {vosk} vosk / {whisper} whisper models, ~{total} MB",
+        return Text(f"on disk: {vosk} vosk / {whisper} whisper, ~{total} MB",
                     style=MUTED)
 
     def _refresh_strips(self) -> None:
@@ -626,9 +919,6 @@ class MicApp(App):
             self.query_one("#cache-strip", Static).update(self._cache_strip())
         except Exception:
             pass
-
-    def _dash_header(self) -> str:
-        return "TALKER PDA - HOME"
 
     def _card_provider(self) -> Text:
         p = self.settings["provider"]
@@ -652,7 +942,9 @@ class MicApp(App):
         if p == "gemini_proxy":
             return Text.assemble(("MODEL\n", "dim"),
                                  (self.settings["gemini_models"][0].split("/")[-1],
-                                  "bold"), (f"\n+{len(self.settings['gemini_models']) - 1} fallback(s)", "dim"))
+                                  "bold"),
+                                 (f"\n+{len(self.settings['gemini_models']) - 1} fallback(s)",
+                                  "dim"))
         if p == "custom_proxy":
             n = len(self.settings.get("custom_models") or [])
             return Text.assemble(("MODEL\n", "dim"),
@@ -670,22 +962,18 @@ class MicApp(App):
         self._refresh_nav()
 
     # =======================================================================
-    # RECORDING INDICATOR
+    # RECORDING INDICATOR + LEVEL METER
     # =======================================================================
     def watch_recording(self, recording: bool) -> None:
         try:
-            pane = self.query_one("#test")
             badge = self.query_one("#rec-badge", Static)
             if recording:
-                pane.add_class("recording")
                 badge.add_class("on")
                 badge.update("* REC")
-                self.sub_title = "* REC"
             else:
-                pane.remove_class("recording")
                 badge.remove_class("on")
                 badge.update("o idle")
-                self.sub_title = "zone comms"
+                self._meter_update(0, None, 0.0)
         except Exception:
             pass
 
@@ -699,8 +987,75 @@ class MicApp(App):
         except Exception:
             pass
 
+    @staticmethod
+    def _meter_render(pct: int) -> Text:
+        """20-cell bar; threshold tick at cell 10 (50%)."""
+        cells = int(round(pct / 5))
+        filled = min(20, cells)
+        bar = "█" * filled
+        empty = "░" * (20 - filled)
+        t = Text()
+        below = filled < 10
+        t.append(bar, AMBER if below else ACCENT)
+        t.append(empty, "dim")
+        # threshold marker line as a separate widget would misalign; use overlay char
+        marked = Text.assemble(t[:10], ("|", RUST), t[10:]) if len(t) >= 10 else t
+        return marked
+
+    def _meter_update(self, pct: int, silence_remaining, elapsed: float) -> None:
+        try:
+            self.query_one("#meter", Static).update(self._meter_render(pct))
+            status = self.query_one("#meter-status", Static)
+            if silence_remaining is not None:
+                status.update(Text.assemble(
+                    (f"{elapsed:4.1f}s", "dim"),
+                    (f"  silence auto-stop in {silence_remaining:.1f}s", AMBER)))
+            else:
+                status.update(Text.assemble((f"{elapsed:4.1f}s", "dim"),
+                                            ("  live", ACCENT)))
+        except Exception:
+            pass
+
     # =======================================================================
-    # DIRTY TRACKING / SAVE / START
+    # HEARD PANEL + HISTORY
+    # =======================================================================
+    def _heard_render(self, text, stats: str) -> Text:
+        if not text:
+            return Text("heard:  - no check yet -", style="dim")
+        return Text.assemble(("heard:\n", "dim"),
+                             (text, f"bold {ACCENT}"),
+                             (f"\n{stats}", "dim") if stats else ("", "dim"))
+
+    def _set_heard(self, text: str, stats: str) -> None:
+        try:
+            panel = self.query_one("#heard-panel", Static)
+            panel.update(self._heard_render(text or "", stats))
+            panel.set_class(bool(text), "filled")
+        except Exception:
+            pass
+        if text:
+            self._history.appendleft(
+                (datetime.now().strftime("%H:%M:%S"),
+                 self.settings["provider"], text, stats))
+            self._refresh_history()
+
+    def _refresh_history(self) -> None:
+        try:
+            hist = self.query_one("#history", Static)
+            if not self._history:
+                hist.update("")
+                return
+            lines = [Text("recent checks:", style="dim")]
+            for ts, provider, text, stats in list(self._history)[:3]:
+                short = text if len(text) <= 60 else text[:57] + "..."
+                lines.append(Text.assemble((f"{ts} ", "dim"), (f"{provider}: ", ""),
+                                           (short, TEXT)))
+            hist.update(Group(*lines))
+        except Exception:
+            pass
+
+    # =======================================================================
+    # DIRTY / SAVE / START
     # =======================================================================
     def _mark_dirty(self) -> None:
         self._dirty = True
@@ -758,23 +1113,41 @@ class MicApp(App):
             self._gem_move(1)
         elif btn == "custom-add":
             self._custom_add()
-        elif btn == "custom-toggle":
-            self._custom_toggle()
         elif btn == "custom-up":
             self._custom_move(-1)
         elif btn == "custom-down":
             self._custom_move(1)
         elif btn == "custom-delete":
             self._custom_delete()
+        elif btn == "whisper-download":
+            self._whisper_download()
+        elif btn == "thr-down":
+            self._tune_threshold(-250)
+        elif btn == "thr-up":
+            self._tune_threshold(250)
         elif btn == "mgr-delete":
             self._mgr_delete()
         elif btn == "mgr-refresh":
             self._refresh_manager()
+            self._ping_proxy()
         elif btn == "test-start":
             self._start_test()
         elif btn == "test-stop":
             if self._test_stop is not None:
                 self._test_stop.set()
+
+    def _tune_threshold(self, delta: int) -> None:
+        current = int(self.settings.get("silence_level", 1000))
+        self.settings["silence_level"] = max(100, min(8000, current + delta))
+        self._mark_dirty()
+        self._refresh_audio_settings()
+
+    def _refresh_audio_settings(self) -> None:
+        try:
+            self.query_one("#thr-val", Static).update(
+                f"threshold {self.settings.get('silence_level', 1000)}")
+        except Exception:
+            pass
 
     # =======================================================================
     # OPTION LISTS
@@ -788,10 +1161,9 @@ class MicApp(App):
             if data in PROVIDERS:
                 self.settings["provider"] = data
                 self._mark_dirty()
-                self._refresh_strips()
                 self._refresh_dashboard()
                 try:
-                    self.notify(f"provider: {data}", title="channel")
+                    self.notify(f"provider: {data}", title="set")
                 except Exception:
                     pass
         elif ol.id == "lang-list":
@@ -800,12 +1172,36 @@ class MicApp(App):
         elif ol.id == "whisper-list":
             self.settings["whisper_model"] = data
             self._mark_dirty()
-            self._refresh_strips()
             self._refresh_dashboard()
+            self._reload_list("#whisper-list", self._whisper_options())
+        elif ol.id == "device-list":
+            if data == "dev:none":
+                self.settings["input_device"] = None
+            elif data.startswith("dev:"):
+                try:
+                    self.settings["input_device"] = int(data[4:])
+                except ValueError:
+                    return
+            self._mark_dirty()
+            self._apply_devices(self._devices)
+            try:
+                self.notify("microphone updated - verify with a radio check",
+                            title="mic")
+            except Exception:
+                pass
         elif ol.id == "mgr-vosk":
             self._mgr_focus = "vosk"
         elif ol.id == "mgr-whisper":
             self._mgr_focus = "whisper"
+
+    def on_option_list_option_highlighted(self, event) -> None:
+        if event.option_list.id == "provider-list":
+            data = getattr(event.option, "id", None)
+            try:
+                self.query_one("#provider-detail", Static).update(
+                    self._provider_detail(data))
+            except Exception:
+                pass
 
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id == "lang-filter":
@@ -825,11 +1221,35 @@ class MicApp(App):
             rows.append(Option(f"{desc}{marker}", id=key))
         return rows
 
+    def _provider_detail(self, key) -> Text:
+        if key not in PROVIDERS:
+            return Text("highlight a provider to see the details",
+                        style="dim")
+        facts = {
+            "whisper_local": lambda: f"100 languages | selected size "
+                                     f"'{self.settings['whisper_model']}'"
+                                     f"{' [cached]' if models_manager.whisper_model_cached(self.settings['whisper_model']) else ' [needs download]'}"
+                                     f" | fully offline after download",
+            "gemini_proxy": lambda: "cloud quality via your API proxy | needs "
+                                    "Gemini API key(s) in the proxy | fallback "
+                                    "chain of lite models",
+            "custom_proxy": lambda: f"{len(self.settings.get('custom_models') or [])} "
+                                    "model(s) in chain | any audio-capable model "
+                                    "in provider/modelname format | proxy "
+                                    "credentials required",
+            "vosk_local": lambda: "~40 MB per-language models | weak-systems "
+                                  "fallback | lower accuracy than whisper on "
+                                  "real mic audio",
+        }
+        desc = PROVIDERS[key]
+        head, _, tail = desc.partition(": ")
+        return Text.assemble((head + "\n", f"bold {ACCENT}"),
+                             (tail + "\n\n", TEXT),
+                             (facts[key](), "dim"))
+
     # ---- language pane
     def _language_options(self, query: str):
         q = query.lower()
-        from settings import DEFAULT_SETTINGS
-        pinned = ["en", "en-gb", "ru", "uk", "pl", "es"]
 
         def label_for(code):
             cur = "  *" if code == self.settings["language"] else ""
@@ -841,13 +1261,18 @@ class MicApp(App):
             return Option(f"-- {text} --", id=f"hdr:{text}")
 
         if q:
-            matches = [c for c in language_display_order()
+            matches = [c for c in _language_codes()
                        if q in LANGUAGES[c].lower() or q in c]
             return [label_for(c) for c in matches] or [Option("(no match)")]
         rows = [header("pinned")]
-        rows += [label_for(c) for c in pinned]
-        rows.append(header("all languages"))
-        rows += [label_for(c) for c in language_display_order() if c not in pinned]
+        rows += [label_for(c) for c in PINNED_LANGS]
+        whisper_rest = [c for c in _language_codes()
+                        if c not in PINNED_LANGS and whisper_supported(c)]
+        vosk_only = [c for c in _language_codes() if not whisper_supported(c)]
+        rows.append(header("whisper + more"))
+        rows += [label_for(c) for c in whisper_rest]
+        rows.append(header("vosk only"))
+        rows += [label_for(c) for c in vosk_only]
         return rows
 
     def _select_language(self, code: str) -> None:
@@ -857,7 +1282,6 @@ class MicApp(App):
             self.push_screen(ModelPickModal(code, options),
                              lambda name: self._apply_model_choice(code, name))
         self._mark_dirty()
-        self._refresh_strips()
         self._refresh_dashboard()
         try:
             self.notify(f"language: {LANGUAGES.get(code, code)}", title="set")
@@ -874,7 +1298,6 @@ class MicApp(App):
         else:
             overrides[code] = model_name
         self._mark_dirty()
-        self._refresh_strips()
         self._refresh_dashboard()
 
     # ---- whisper pane
@@ -884,9 +1307,36 @@ class MicApp(App):
             cur = "  *" if name == self.settings["whisper_model"] else ""
             cached = models_manager.whisper_model_cached(name)
             mark = " [cached]" if cached else ""
-            style_prefix = "" if "NOT RECOMMENDED" not in desc else ""
             rows.append(Option(f"{name}  {desc}{mark}{cur}", id=name))
         return rows
+
+    def _whisper_download(self) -> None:
+        ol = self.query_one("#whisper-list", OptionList)
+        idx = ol.highlighted
+        ids = [(getattr(o, "id", "") or "") for o in ol._options]
+        if idx is None or not (0 <= idx < len(ids)) or not ids[idx]:
+            return
+        size = ids[idx]
+        self._goto("test")
+        self._test_log(f"--- preloading whisper '{size}' ---")
+        self._preload_worker(size)
+
+    @work(thread=True, group="test", exclusive=True)
+    def _preload_worker(self, size: str) -> None:
+        import whisper_local
+
+        def _report(message, current, total):
+            line = message + (f"  [{current}/{total} MB]" if total else "")
+            self.call_from_thread(self._test_progress, message, current, total)
+            self.call_from_thread(self._test_log, f"  {line}")
+
+        try:
+            whisper_local.configure(model_size=size, progress=_report)
+            whisper_local.get_model(self.settings["language"])
+        except Exception as e:
+            self.call_from_thread(self._test_log, f"[ERROR] {e}")
+        finally:
+            self.call_from_thread(self._refresh_dashboard)
 
     # ---- gemini pane
     def _gemini_options(self):
@@ -986,11 +1436,6 @@ class MicApp(App):
             return None
         return idx
 
-    def _custom_toggle(self) -> None:
-        # custom chain entries are always on; toggle is remove (delete exists),
-        # so this is a no-op kept for UI symmetry
-        return
-
     def _custom_move(self, step: int) -> None:
         idx = self._custom_highlighted()
         if idx is None:
@@ -1019,18 +1464,32 @@ class MicApp(App):
                 pass
 
     # ---- model manager
+    def _mgr_active_names(self):
+        """Model names currently in active use (for the star marker)."""
+        names = set()
+        if self.settings["provider"] == "whisper_local":
+            names.add(f"faster-whisper-{self.settings['whisper_model']}")
+        info = vosk_model_info(self.settings["language"])
+        if self.settings["provider"] == "vosk_local" and info:
+            names.add(info[0])
+        return names
+
     def _mgr_vosk_options(self):
         entries = models_manager.list_vosk_models()
         if not entries:
             return [Option("(nothing downloaded)", id="empty")]
-        return [Option(f"{name}  ~{size} MB", id=str(path))
+        active = self._mgr_active_names()
+        return [Option(f"{name}  ~{size} MB" +
+                       ("  * active" if name in active else ""), id=str(path))
                 for name, path, size in entries]
 
     def _mgr_whisper_options(self):
         entries = models_manager.list_whisper_models()
         if not entries:
             return [Option("(nothing downloaded)", id="empty")]
-        return [Option(f"{name}  ~{size} MB", id=str(path))
+        active = self._mgr_active_names()
+        return [Option(f"{name}  ~{size} MB" +
+                       ("  * active" if name in active else ""), id=str(path))
                 for name, path, size in entries]
 
     def _refresh_manager(self) -> None:
@@ -1041,9 +1500,13 @@ class MicApp(App):
             whisper_list = self.query_one("#mgr-whisper", OptionList)
             whisper_list.clear_options()
             whisper_list.add_options(self._mgr_whisper_options())
+            total = (sum(e[2] for e in models_manager.list_vosk_models()) +
+                     sum(e[2] for e in models_manager.list_whisper_models()))
             self.query_one("#mgr-location", Static).update(
                 Text(f"vosk: {models_manager.VOSK_DIR}\n"
-                     f"whisper: {models_manager.HF_HUB_DIR}", style=MUTED))
+                     f"whisper: {models_manager.HF_HUB_DIR}\n"
+                     f"total on disk: ~{total} MB  |  * = in active use",
+                     style=MUTED))
         except Exception:
             pass
         self._refresh_dashboard()
@@ -1145,23 +1608,34 @@ class MicApp(App):
             def _on_recording(active: bool):
                 self.call_from_thread(setattr, self, "recording", active)
             kwargs["on_recording"] = _on_recording
+        if "on_level" in params:
+            def _on_level(pct, silence_remaining, elapsed):
+                self.call_from_thread(self._meter_update, pct,
+                                      silence_remaining, elapsed)
+            kwargs["on_level"] = _on_level
 
         def _report(message, current, total):
             line = message + (f"  [{current}/{total} MB]" if total else "")
             self.call_from_thread(self._test_progress, message, current, total)
             self.call_from_thread(self._test_log, f"  {line}")
 
+        heard = ""
+        stats = ""
         try:
             import providers
             if not providers.prepare_model(settings, report=_report):
                 self.call_from_thread(self._test_log,
                                       "[WARN] model/proxy not ready")
-            test_func(settings, **kwargs)
+            import time as _time
+            t1 = _time.perf_counter()
+            heard = test_func(settings, **kwargs) or ""
+            stats = f"transcribed in {_time.perf_counter() - t1:.1f}s"
         except TypeError:
-            test_func(settings)
+            heard = test_func(settings) or ""
         except Exception as e:
             self.call_from_thread(self._test_log, f"[ERROR] {e}")
         finally:
+            self.call_from_thread(self._set_heard, heard, stats)
             self.call_from_thread(self._set_test_running, False)
             self.call_from_thread(setattr, self, "recording", False)
             self.call_from_thread(self._refresh_dashboard)
@@ -1202,12 +1676,16 @@ HOME_INTRO_TEXT = ("Configure your rig, then go live.\n"
                    "Everything is one click away - and the mouse works everywhere.")
 
 
-def run_tui(settings, on_test=None, **_kwargs):
+def run_tui(settings, on_test=None, wizard=None, **_kwargs):
     """Run the PDA console. Returns settings on GO LIVE.
 
-    Raises SystemExit(0) when the user quits without starting.
+    wizard: force the first-run wizard on/off (default: auto-detect from the
+    absence of a settings file). Raises SystemExit(0) on quit-without-start.
     """
-    app = MicApp(settings, test_func=on_test)
+    if wizard is None:
+        from settings import SETTINGS_FILE
+        wizard = not SETTINGS_FILE.exists()
+    app = MicApp(settings, test_func=on_test, wizard=wizard)
     result = app.run()
     if result is None:
         print("Exiting without starting the microphone service.")
