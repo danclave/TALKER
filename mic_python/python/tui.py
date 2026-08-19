@@ -3,6 +3,7 @@
 # arrow keys AND mouse, clickable everything, live test pane with Stop
 # (the classic prompt_toolkit TUI lives on as tui_old.py / talker_mic_old.exe)
 
+import inspect
 import threading
 
 from rich import box
@@ -18,7 +19,8 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.reactive import reactive
 from textual.screen import ModalScreen
 from textual.widgets import (
-    Button, ContentSwitcher, Footer, Header, Input, Label, OptionList, RichLog, Static, Tree,
+    Button, ContentSwitcher, Footer, Header, Input, Label, OptionList, ProgressBar,
+    RichLog, Static, Tree,
 )
 from textual.widgets.option_list import Option
 
@@ -112,6 +114,32 @@ Static.hint, Label.hint {{ color: {MUTED}; margin-bottom: 1; }}
     padding: 1;
     height: 1fr;
     color: {TEXT};
+}}
+#test {{
+    border: round {BORDER};
+    padding: 0 1;
+}}
+#test.recording {{
+    border: round {BAD};
+}}
+#test-statusline {{
+    height: 1;
+    margin-bottom: 1;
+}}
+#rec-badge {{
+    width: 8;
+    color: {MUTED};
+}}
+#rec-badge.on {{
+    color: {BAD};
+    text-style: bold;
+}}
+#test-status {{
+    color: {MUTED};
+}}
+ProgressBar {{
+    margin-bottom: 1;
+    grid-size: 1;
 }}
 Input, OptionList {{
     border: solid {BORDER};
@@ -247,6 +275,7 @@ class MicApp(App):
         Binding("q", "quit_service", "Quit"),
         Binding("s", "save", "Save"),
         Binding("f1", "help", "Help", key_display="F1"),
+        Binding("escape", "goto_view('home')", "Home", show=False),
         Binding("1", "goto_view('home')", show=False),
         Binding("2", "goto_view('test')", show=False),
         Binding("3", "goto_view('provider')", show=False),
@@ -258,6 +287,7 @@ class MicApp(App):
     ]
 
     current_view = reactive("home")
+    recording = reactive(False)
     _test_stop = None  # threading.Event while a radio check runs
 
     def __init__(self, settings: dict, test_func=None):
@@ -266,6 +296,43 @@ class MicApp(App):
         self._test_func = test_func
         self._gem_order = []  # display order of gemini candidates
         self._mgr_focus = "vosk"  # which stash list is active
+        self._dirty = False      # unsaved settings changes
+        self._rec_blink = True
+
+    # ---- recording indicator ------------------------------------------------
+    def watch_recording(self, recording: bool) -> None:
+        try:
+            pane = self.query_one("#test")
+            badge = self.query_one("#rec-badge", Static)
+            if recording:
+                pane.add_class("recording")
+                badge.add_class("on")
+                badge.update("* REC")
+            else:
+                pane.remove_class("recording")
+                badge.remove_class("on")
+                badge.update("o idle")
+        except Exception:
+            pass
+
+    def _blink_rec(self) -> None:
+        """Toggle the REC badge blink; called on a timer while recording."""
+        if not self.recording:
+            return
+        self._rec_blink = not self._rec_blink
+        try:
+            self.query_one("#rec-badge", Static).update(
+                "* REC" if self._rec_blink else "  REC")
+        except Exception:
+            pass
+
+    def _mark_dirty(self) -> None:
+        self._dirty = True
+        self._refresh_strips()
+
+    def _mark_clean(self) -> None:
+        self._dirty = False
+        self._refresh_strips()
 
     # ---- layout ---------------------------------------------------------
     def compose(self) -> ComposeResult:
@@ -294,8 +361,13 @@ class MicApp(App):
                                     "current settings", classes="hint")
                         yield Label("Press Start, then speak. Recording stops after "
                                     "~2s of silence - or press Stop.", classes="hint")
+                        with Horizontal(id="test-statusline"):
+                            yield Static("o idle", id="rec-badge")
+                            yield Static("", id="test-status")
                         yield RichLog(id="test-log", classes="logbox", wrap=True,
                                       markup=False, max_lines=500)
+                        yield ProgressBar(id="test-progress", show_eta=False,
+                                          total=100)
                         with Horizontal():
                             yield Button("Start radio check", id="test-start",
                                          variant="primary")
@@ -341,6 +413,7 @@ class MicApp(App):
         tree.cursor_line = 1
         self.query_one("#content", ContentSwitcher).current = "home"
         self._refresh_manager()
+        self.set_interval(0.6, self._blink_rec)
 
     # ---- sidebar strips --------------------------------------------------
     def _setup_strip(self) -> Text:
@@ -354,6 +427,8 @@ class MicApp(App):
         override = (s.get("vosk_model_overrides") or {}).get(s["language"])
         if override:
             lines.append(f"vosk: {override}")
+        if self._dirty:
+            lines.append("* unsaved changes")
         return Text("\n".join(lines), style=MUTED)
 
     def _cache_strip(self) -> Text:
@@ -488,11 +563,11 @@ class MicApp(App):
 
     def action_save(self) -> None:
         save_settings(self.settings)
+        self._mark_clean()
         try:
             self.notify("settings stashed", title="saved")
         except Exception:
             pass
-        self._refresh_strips()
 
     def action_quit_service(self) -> None:
         self.exit(None)
@@ -534,6 +609,7 @@ class MicApp(App):
         if ol.id == "provider-list":
             if data in PROVIDERS:
                 self.settings["provider"] = data
+                self._mark_dirty()
                 self._refresh_strips()
                 self._refresh_home()
                 try:
@@ -544,6 +620,7 @@ class MicApp(App):
             self._select_language(data)
         elif ol.id == "whisper-list":
             self.settings["whisper_model"] = data
+            self._mark_dirty()
             self._refresh_strips()
             self._refresh_home()
         elif ol.id == "mgr-vosk":
@@ -563,6 +640,7 @@ class MicApp(App):
         if len(options) > 1:
             self.push_screen(ModelPickModal(code, options),
                              lambda name: self._apply_model_choice(code, name))
+        self._mark_dirty()
         self._refresh_strips()
         self._refresh_home()
         try:
@@ -579,6 +657,7 @@ class MicApp(App):
             overrides.pop(code, None)
         else:
             overrides[code] = model_name
+        self._mark_dirty()
         self._refresh_strips()
         self._refresh_home()
 
@@ -610,6 +689,7 @@ class MicApp(App):
         gem_list = self.query_one("#gemini-list", OptionList)
         gem_list.clear_options()
         gem_list.add_options(self._gemini_options())
+        self._mark_dirty()
         self._refresh_strips()
         self._refresh_home()
 
@@ -625,6 +705,7 @@ class MicApp(App):
             gem_list = self.query_one("#gemini-list", OptionList)
             gem_list.clear_options()
             gem_list.add_options(self._gemini_options())
+            self._mark_dirty()
             try:
                 gem_list.highlighted = j
             except Exception:
@@ -655,9 +736,37 @@ class MicApp(App):
         self.push_screen(ConfirmModal(f"Delete {name} (~{size} MB)?"), _confirmed)
 
     # ---- radio check (live test) --------------------------------------------
+    def _test_progress(self, message: str, current, total) -> None:
+        """Update the progress bar + status line from a report callback."""
+        try:
+            bar = self.query_one("#test-progress", ProgressBar)
+            status = self.query_one("#test-status", Static)
+            if total and current is not None:
+                bar.total = 100
+                bar.progress = min(100, int(100 * current / total))
+                status.update(f"{message}  {current}/{total} MB")
+            elif "ready" in message or "cached" in message or "reachable" in message:
+                bar.total = 100
+                bar.progress = 100
+                status.update(message)
+            else:
+                # no granular progress (e.g. whisper/HF): pulse
+                if bar.total is not None and bar.total != 0:
+                    bar.total = None
+                bar.advance(12)
+                status.update(message)
+        except Exception:
+            pass
+
     def _test_log(self, msg: str) -> None:
         try:
-            self.query_one("#test-log", RichLog).write(msg)
+            log = self.query_one("#test-log", RichLog)
+            if msg.startswith("heard:"):
+                log.write(Text(msg, style=f"bold {ACCENT}"))
+            elif msg.startswith("[WARN]") or msg.startswith("[ERROR]"):
+                log.write(Text(msg, style=BAD))
+            else:
+                log.write(msg)
         except Exception:
             pass
 
@@ -683,13 +792,39 @@ class MicApp(App):
         stop = self._test_stop
         test_func = self._test_func
         settings = self.settings
+        progress_lines = []
+        # signature-safe kwargs: test funcs may not accept every hook
+        params = inspect.signature(test_func).parameters
+        kwargs = {"status": lambda m: self.call_from_thread(self._test_log, m)}
+        if "stop_requested" in params:
+            kwargs["stop_requested"] = (lambda: stop.is_set()) if stop else None
+        if "on_recording" in params:
+            def _on_recording(active: bool):
+                self.call_from_thread(setattr, self, "recording", active)
+            kwargs["on_recording"] = _on_recording
+
+        def _report(message, current, total):
+            line = message + (f"  [{current}/{total} MB]" if total else "")
+            progress_lines.append(line)
+            self.call_from_thread(self._test_progress, message, current, total)
+            self.call_from_thread(self._test_log, f"  {line}")
+
         try:
-            test_func(settings, status=lambda m: self.call_from_thread(self._test_log, m),
-                      stop_requested=(lambda: stop.is_set()) if stop else None)
+            import providers
+            ok = providers.prepare_model(settings, report=_report)
+            if not ok:
+                self.call_from_thread(self._test_log, "[WARN] model/proxy not ready")
+            # run_test also prepares internally; the model is cached by then,
+            # so the duplicate check is instant
+            test_func(settings, **kwargs)
+        except TypeError:
+            # very old-style test func: positional only
+            test_func(settings)
         except Exception as e:
             self.call_from_thread(self._test_log, f"[ERROR] {e}")
         finally:
             self.call_from_thread(self._set_test_running, False)
+            self.call_from_thread(setattr, self, "recording", False)
             self.call_from_thread(self._refresh_strips)
 
 

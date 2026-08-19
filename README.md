@@ -83,20 +83,17 @@ If you are using a paid service (OpenAI and Openrouter support only) and prefer 
 
 ### Step 3: Launch and Play
 1.  If you are using the API Proxy (Option A), make sure `proxy_app.exe` is running.
-2.  If you plan to use voice chat, run `talker_mic.exe` (Windows) or `./talker_mic` (Linux/macOS). Two interface builds ship - pick whichever you prefer (both behave identically):
-    *   **`talker_mic.exe`** - the "zone comms console": a modern mouse-enabled interface (click the sidebar, buttons, and lists; type `/` to filter languages; test your mic from the RADIO CHECK pane).
-    *   **`talker_mic_old.exe`** - the classic keyboard-driven menu (same features, arrow keys + text search).
-    In either one you pick:
+2.  If you plan to use voice chat, run `talker_mic.exe` (Windows) or `./talker_mic` (Linux/macOS) - the "zone comms console", a mouse-enabled interface (click the sidebar, buttons, and lists; type `/` to filter languages; test your mic from the RADIO CHECK pane with a live recording indicator and download progress). Keyboard works everywhere too (`1-7` panes, `s` save, `q` quit, `F1` help). There you pick:
     *   **Transcription provider**:
-        *   **Vosk local (recommended)** - specialized model per language, light and fast (~30-140 MB per language).
-        *   **Whisper local (multilingual fallback)** - 100 languages from one model, but heavier. For English only, `tiny` is enough (an English-specialized `.en` variant is used automatically). For other languages, use `small` or bigger; `medium`/`large` are too heavy for gameplay.
-        *   **Gemini via the API proxy** - best quality, requires the proxy.
+        *   **Whisper local (recommended)** - the best offline accuracy across 100 languages. For English only, `tiny` is enough (an English-specialized `.en` variant is used automatically). For other languages, use `small` or bigger; `medium`/`large` are too heavy for gameplay.
+        *   **Vosk local** - an ultra-light fallback (~30-140 MB per language) for weak/limited systems. Note: noticeably lower accuracy than Whisper on real microphone audio (clean-speech benchmarks flatter it; side-by-side mic tests favor Whisper `small`).
+        *   **Gemini via the API proxy** - best quality overall, requires the proxy.
     *   **Language**: always set explicitly (searchable list, English/Russian first). Every entry shows whether Vosk and/or Whisper support it, and Vosk model sizes - languages with several Vosk models (e.g. Russian) let you pick which one; the latest is preselected.
     *   **Whisper model size** and, for Gemini, the **voice model fallback chain**.
-    Settings are saved to `talker_mic_settings.json` next to the exe and can be changed any time by simply starting the app again.
-3.  Still in the menu, you can use **"Test transcription"** to record yourself and immediately see what the selected provider hears - handy for comparing models and languages before playing.
-4.  **"Manage downloaded models"** shows every model cached on disk (with sizes and locations) and lets you delete the ones you no longer need.
-3.  Launch S.T.A.L.K.E.R. Anomaly.
+    Settings are saved to `talker_mic_settings.json` next to the exe (automatically stashed when you start the service) and can be changed any time by simply starting the app again.
+3.  Still in the menu, you can use **"RADIO CHECK"** to record yourself and immediately see what the selected provider hears - handy for comparing models and languages before playing. Models download with a visible progress bar on first use.
+4.  **"STASH"** shows every model cached on disk (with sizes and locations) and lets you delete the ones you no longer need.
+5.  Launch S.T.A.L.K.E.R. Anomaly.
 
 ### Step 4: Configure In-Game Settings (MCM)
 Once in-game, you need to configure TALKER in the Mod Configuration Menu (MCM) before you can start talking to NPCs.

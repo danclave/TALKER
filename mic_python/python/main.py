@@ -16,9 +16,6 @@ import mic_test
 
 import settings as settings_module
 
-# Set by main_old.py to force the classic TUI (talker_mic_old.exe build).
-TUI_OVERRIDE = None
-
 # Make console output crash-proof on non-UTF-8 consoles (cp1251/cp1252):
 # unencodable characters (emoji, foreign text) become '?' instead of raising.
 for _stream in (sys.stdout, sys.stderr):
@@ -83,18 +80,14 @@ def resolve_startup_config():
         return app_settings
 
     # Full TUI for interactive terminals; plain menu fallback for piped stdin.
-    # main_old.py (talker_mic_old.exe) overrides this with the classic TUI.
     if sys.stdin.isatty() and sys.stdout.isatty():
-        tui_module = TUI_OVERRIDE
-        if tui_module is None:
-            try:
-                import tui
-                tui_module = tui
-            except Exception as e:
-                print(f"[WARN] New TUI unavailable ({e}), falling back to the classic one.")
-                import tui_old as tui_module
-        app_settings = tui_module.run_tui(app_settings, on_test=mic_test.run_test)
-        return app_settings
+        try:
+            import tui
+        except Exception as e:
+            print(f"[WARN] TUI unavailable ({e}), falling back to the plain menu.")
+        else:
+            app_settings = tui.run_tui(app_settings, on_test=mic_test.run_test)
+            return app_settings
 
     app_settings, _ = settings_module.run_menu(app_settings, on_test=mic_test.run_test)
     return app_settings
@@ -120,8 +113,9 @@ def main():
         transcribe_audio_file_func = getattr(transcription_module, "transcribe_audio_file")
         load_api_key()
         # download/cache the selected model up front so the first in-game
-        # use does not stall on a download
-        prepare_model(app_settings)
+        # use does not stall on a download (progress printed to console)
+        prepare_model(app_settings, report=lambda msg, cur, tot: print(
+            f"  {msg}" + (f"  [{cur}/{tot} MB]" if tot else "")))
         recorder = Recorder(AUDIO_FILE)
         Path(COMMAND_FILE).touch()
 

@@ -33,16 +33,27 @@ FALLBACK_LANG = "en"  # used when the selected language has no Vosk model
 _model = None
 _model_lang = None
 _model_overrides = {}
+_progress = None  # optional callback(message, current_mb, total_mb_or_None)
 
 
-def configure(model_overrides=None):
-    """Set per-language model overrides (called by main from settings)."""
-    global _model_overrides
+def _report(message, current=None, total=None):
+    if _progress:
+        try:
+            _progress(message, current, total)
+        except Exception:
+            pass
+
+
+def configure(model_overrides=None, progress=None):
+    """Set per-language model overrides and a progress callback."""
+    global _model_overrides, _progress
     if isinstance(model_overrides, dict):
         _model_overrides = {
             code: name for code, name in model_overrides.items()
             if vosk_model_by_name(code, name)
         }
+    if progress is not None:
+        _progress = progress
 
 ################################################################################################
 # MODEL LOADING (singleton)
@@ -53,15 +64,30 @@ def _download_model(model_name: str, url: str, size_mb: int) -> Path:
     target_dir = MODELS_DIR / model_name
     # archives from alphacephei extract to a folder named exactly like the model
     if target_dir.is_dir() and any(target_dir.iterdir()):
+        _report(f"vosk model '{model_name}' already cached", None, None)
         return target_dir
 
-    print(f"Downloading Vosk model '{model_name}' (~{size_mb} MB, one time)...")
+    _report(f"downloading vosk model '{model_name}' (~{size_mb} MB, one time)...",
+            0, size_mb)
     if size_mb >= 150:
         print("[WARN] This is a large model - it will use more resources and be slow.")
     try:
         response = requests.get(url, stream=True, timeout=120)
         response.raise_for_status()
-        zip_bytes = response.content
+        total_bytes = int(response.headers.get("Content-Length", 0)) or size_mb * 1048576
+        zip_chunks = []
+        done = 0
+        last_reported = -1
+        for chunk in response.iter_content(chunk_size=1048576):
+            zip_chunks.append(chunk)
+            done += len(chunk)
+            mb_done = round(done / 1048576, 1)
+            mb_total = round(total_bytes / 1048576, 1)
+            if mb_done != last_reported:  # report at most once per MB
+                last_reported = mb_done
+                _report(f"downloading '{model_name}'", mb_done, mb_total)
+        zip_bytes = b"".join(zip_chunks)
+        _report(f"downloaded {round(done / 1048576, 1)} MB - extracting...", None, None)
     except Exception as e:
         print(f"[ERROR] Model download failed: {e}")
         print(f"-> Check your internet connection, or download manually from {url}")

@@ -15,9 +15,9 @@ SETTINGS_FILE = ROOT_DIR / "talker_mic_settings.json"
 
 # Selectable providers in the menu (whisper_api stays CLI-only for compatibility)
 PROVIDERS = {
-    "vosk_local":    "Vosk local     - RECOMMENDED: specialized per-language models, light & fast",
-    "whisper_local": "Whisper local  - multilingual fallback (100 languages), heavier",
-    "gemini_proxy":  "Gemini proxy   - best quality, requires the API proxy",
+    "whisper_local": "Whisper local  - RECOMMENDED: best offline accuracy, 100 languages",
+    "gemini_proxy":  "Gemini proxy   - best quality overall, requires the API proxy",
+    "vosk_local":    "Vosk local     - ultra-light fallback for weak systems; noticeably lower accuracy on real mic audio",
 }
 
 WHISPER_MODELS = {
@@ -34,7 +34,7 @@ GEMINI_VOICE_MODES = [
 ]
 
 DEFAULT_SETTINGS = {
-    "provider": "vosk_local",
+    "provider": "whisper_local",
     "language": "en",
     "whisper_model": "small",
     "gemini_models": ["gemini/gemini-3.5-flash-lite", "gemini/gemini-3.1-flash-lite"],

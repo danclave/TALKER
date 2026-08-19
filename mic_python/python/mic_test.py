@@ -19,11 +19,13 @@ AUDIO_FILE = "talker_test_audio.ogg"
 GRACE_SECONDS = 5
 
 
-def run_test(app_settings, status=None, stop_requested=None):
+def run_test(app_settings, status=None, stop_requested=None, on_recording=None):
     """Record from the mic and transcribe with the selected provider/settings.
 
     status:         callable(str) receiving live progress lines (default: print)
     stop_requested: callable() -> bool - stop recording early when it returns True
+    on_recording:   callable(bool) - fired with True when recording starts,
+                    False when it ends (for visual indicators)
     Returns the transcription text ('' on failure).
     """
     say = status or (lambda msg: print(msg))
@@ -39,19 +41,33 @@ def run_test(app_settings, status=None, stop_requested=None):
         say(f"gemini chain: {' -> '.join(app_settings['gemini_models'])}")
 
     say("preparing model (downloads and caches on first use)...")
-    if not prepare_model(app_settings):
+
+    def _report(message, current, total):
+        if total:
+            pct = int(100 * (current or 0) / total)
+            say(f"  {message}  [{current}/{total} MB  {pct}%]")
+        else:
+            say(f"  {message}")
+
+    if not prepare_model(app_settings, report=_report):
         say("[WARN] model/proxy not ready - transcription may fail")
 
     recorder = Recorder(AUDIO_FILE)
     say("recording... speak now (stops after ~2s of silence)")
+    if on_recording:
+        on_recording(True)
     t0 = time.perf_counter()
     recorder.start_recording(silence_grace_period=GRACE_SECONDS)
-    while recorder.is_recording():
-        if stop_requested and stop_requested():
-            recorder.stop_recording()
-            say("stop requested - recording ended")
-            break
-        time.sleep(0.1)
+    try:
+        while recorder.is_recording():
+            if stop_requested and stop_requested():
+                recorder.stop_recording()
+                say("stop requested - recording ended")
+                break
+            time.sleep(0.1)
+    finally:
+        if on_recording:
+            on_recording(False)
     record_seconds = time.perf_counter() - t0
 
     say("transcribing...")
