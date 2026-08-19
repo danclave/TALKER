@@ -265,6 +265,12 @@ ModalScreen {{ align: center middle; background: {BG} 85%; }}
     border: solid {ACCENT};
     padding: 1 2;
 }}
+Wizard .modalbox {{
+    width: 70%;
+    height: 88%;
+}}
+.wizard-step {{ height: 1fr; }}
+.wizard-step OptionList {{ height: 1fr; }}
 HelpBody {{ color: {TEXT}; }}
 .wizard-step {{ height: auto; }}
 
@@ -501,33 +507,51 @@ class ModelPickModal(ModalScreen):
 
 
 class Wizard(ModalScreen):
-    """First-run setup: language -> provider -> optional radio check."""
+    """First-run setup, one step per view: Language -> Provider -> Confirm.
+
+    Enter (or Next) advances; Back returns; Esc skips to the dashboard.
+    """
 
     BINDINGS = [Binding("escape", "skip", "Skip", show=False),
                 Binding("right", "next", "Next", show=False),
                 Binding("left", "back", "Back", show=False)]
 
+    STEP_TITLES = ["Language", "Provider", "Confirm"]
+
     def __init__(self, settings: dict):
         super().__init__()
         self.settings = settings
+        self.step = 0
+        self.picked_language = settings.get("language", "en")
+        self.picked_provider = settings.get("provider", "whisper_local")
 
     def compose(self) -> ComposeResult:
-        with Vertical(classes="modalbox"):
-            yield Static("TALKER PDA - first-time setup", classes="HelpBody")
-            yield Static("Pick your language, then a provider. Esc skips to the "
-                         "dashboard anytime.", classes="HelpBody")
-            yield Label("1. Language", classes="sidebar-section")
-            yield Input(placeholder="filter... (pinned shown first)",
-                        id="wizard-lang-filter")
-            yield OptionList(*self._lang_options(""), id="wizard-lang-list")
-            yield Label("2. Provider", classes="sidebar-section")
-            yield OptionList(*[
-                Option(desc, id=key) for key, desc in PROVIDERS.items()
-            ], id="wizard-provider-list")
+        with Vertical(classes="modalbox wizard-box"):
+            yield Static("First-time setup", id="wizard-title")
+            yield Static("Esc skips to the dashboard anytime; you can change "
+                         "everything later.", classes="HelpBody")
+            with ContentSwitcher(id="wizard-content"):
+                with Vertical(id="step-lang", classes="wizard-step"):
+                    yield Static("What language will you speak?", classes="HelpBody")
+                    yield Input(placeholder="filter... (pinned shown first)",
+                                id="wizard-lang-filter")
+                    yield OptionList(*self._lang_options(""),
+                                     id="wizard-lang-list")
+                with Vertical(id="step-provider", classes="wizard-step"):
+                    yield Static("Who transcribes your voice?", classes="HelpBody")
+                    yield OptionList(*self._provider_options(),
+                                     id="wizard-provider-list")
+                with Vertical(id="step-summary", classes="wizard-step"):
+                    yield Static("", id="wizard-summary")
             with Horizontal():
-                yield Button("Finish setup", id="wizard-finish", variant="primary")
+                yield Button("Back", id="wizard-back", disabled=True)
                 yield Button("Skip - use defaults", id="wizard-skip")
+                yield Button("Next", id="wizard-next", variant="primary")
 
+    def on_mount(self) -> None:
+        self._set_step(0)
+
+    # ---- option builders
     @staticmethod
     def _lang_options(query: str):
         q = query.lower()
@@ -537,35 +561,102 @@ class Wizard(ModalScreen):
         return [Option(f"{LANGUAGES[c]} ({c})", id=f"lang:{c}") for c in codes[:40]] \
             or [Option("(no match)")]
 
+    def _provider_options(self):
+        return [Option(desc + ("  *" if key == self.picked_provider else ""), id=key)
+                for key, desc in PROVIDERS.items()]
+
+    # ---- step machinery
+    def _set_step(self, i: int) -> None:
+        i = max(0, min(2, i))
+        self.step = i
+        self.query_one("#wizard-content", ContentSwitcher).current = \
+            ["step-lang", "step-provider", "step-summary"][i]
+        self.query_one("#wizard-title", Static).update(
+            f"First-time setup  -  step {i + 1} of 3: {self.STEP_TITLES[i]}")
+        self.query_one("#wizard-back", Button).disabled = i == 0
+        self.query_one("#wizard-next", Button).label = \
+            "Finish" if i == 2 else "Next"
+        if i == 0:
+            try:
+                ol = self.query_one("#wizard-lang-list", OptionList)
+                self._highlight_language(ol)
+            except Exception:
+                pass
+            self.query_one("#wizard-lang-filter", Input).focus()
+        elif i == 1:
+            ol = self.query_one("#wizard-provider-list", OptionList)
+            ids = [(getattr(o, "id", "") or "") for o in ol._options]
+            if self.picked_provider in ids:
+                ol.highlighted = ids.index(self.picked_provider)
+            ol.focus()
+        else:
+            self._render_summary()
+            self.query_one("#wizard-next", Button).focus()
+
+    def _highlight_language(self, ol: OptionList) -> None:
+        ids = [(getattr(o, "id", "") or "") for o in ol._options]
+        want = f"lang:{self.picked_language}"
+        if want in ids:
+            ol.highlighted = ids.index(want)
+
+    def _render_summary(self) -> None:
+        lang = f"{LANGUAGES.get(self.picked_language, self.picked_language)} " \
+               f"({self.picked_language})"
+        provider = PROVIDERS.get(self.picked_provider, self.picked_provider)
+        self.query_one("#wizard-summary", Static).update(
+            Text.assemble(("Your setup:\n\n", "bold"),
+                          (f"Language  {lang}\n", TEXT),
+                          (f"Provider  {provider}\n\n", TEXT),
+                          ("Finish to stash these and open the dashboard - "
+                           "run a Radio Check there to test your mic.",
+                           "dim")))
+
+    def _advance(self) -> None:
+        # carry the highlighted choice even without Enter
+        if self.step == 0:
+            picked = self._highlighted_id("#wizard-lang-list")
+            if picked and picked.startswith("lang:"):
+                self.picked_language = picked[5:]
+            self._set_step(1)
+        elif self.step == 1:
+            picked = self._highlighted_id("#wizard-provider-list")
+            if picked in PROVIDERS:
+                self.picked_provider = picked
+            self._set_step(2)
+        else:
+            self.dismiss({"language": self.picked_language,
+                          "provider": self.picked_provider})
+
+    def _highlighted_id(self, selector: str):
+        ol = self.query_one(selector, OptionList)
+        idx = ol.highlighted
+        ids = [(getattr(o, "id", "") or "") for o in ol._options]
+        if idx is not None and 0 <= idx < len(ids):
+            return ids[idx]
+        return None
+
+    # ---- events
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id == "wizard-lang-filter":
             ol = self.query_one("#wizard-lang-list", OptionList)
             ol.clear_options()
             ol.add_options(self._lang_options(event.value))
 
-    def _picked_language(self):
-        ol = self.query_one("#wizard-lang-list", OptionList)
-        idx = ol.highlighted
-        options = [(getattr(o, "id", "") or "") for o in ol._options]
-        if idx is not None and 0 <= idx < len(options):
-            picked = options[idx]
-            if picked.startswith("lang:"):
-                return picked[5:]
-        return None
-
-    def _picked_provider(self):
-        ol = self.query_one("#wizard-provider-list", OptionList)
-        idx = ol.highlighted
-        ids = [(getattr(o, "id", "") or "") for o in ol._options]
-        if idx is not None and 0 <= idx < len(ids) and ids[idx] in PROVIDERS:
-            return ids[idx]
-        return None
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        data = getattr(event.option, "id", None)
+        if event.option_list.id == "wizard-lang-list" and data \
+                and data.startswith("lang:"):
+            self.picked_language = data[5:]
+            self._set_step(1)
+        elif event.option_list.id == "wizard-provider-list" and data in PROVIDERS:
+            self.picked_provider = data
+            self._set_step(2)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "wizard-finish":
-            lang = self._picked_language()
-            provider = self._picked_provider()
-            self.dismiss({"language": lang, "provider": provider})
+        if event.button.id == "wizard-next":
+            self._advance()
+        elif event.button.id == "wizard-back":
+            self._set_step(self.step - 1)
         elif event.button.id == "wizard-skip":
             self.dismiss(None)
 
@@ -573,10 +664,10 @@ class Wizard(ModalScreen):
         self.dismiss(None)
 
     def action_next(self) -> None:
-        self.query_one("#wizard-provider-list", OptionList).focus()
+        self._advance()
 
     def action_back(self) -> None:
-        self.query_one("#wizard-lang-filter", Input).focus()
+        self._set_step(self.step - 1)
 
 
 # modal meter: fixed absolute scale so the threshold marker is meaningful

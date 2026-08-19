@@ -171,21 +171,37 @@ async def flow_custom_start_guard():
 
 
 async def flow_manager_delete_cancel():
-    st = fresh()
-    app = MicApp(st)
-    async with app.run_test(size=(110, 32)) as pilot:
-        assert await boot(app, pilot)
-        await pilot.press("8")
-        assert app.current_view == "manager"
-        app.query_one("#mgr-vosk").highlighted = 0
-        await pilot.pause()
-        before = len(models_manager_list())
-        app._mgr_delete()
-        await pilot.pause()
-        assert type(app.screen).__name__ == "ConfirmModal"
-        await pilot.click("#confirm-no")
-        await pilot.pause()
-        assert len(models_manager_list()) == before, "cancel must not delete"
+    import shutil
+    from pathlib import Path
+    import models_manager
+    # ensure at least one deletable vosk entry exists (user may have wiped
+    # the cache - the flow only needs something selectable + cancelable)
+    fake = models_manager.VOSK_DIR / "vosk-model-small-zz-test-fake"
+    created = False
+    if not models_manager.list_vosk_models():
+        fake.mkdir(parents=True, exist_ok=True)
+        (fake / "conf").write_text("fake", encoding="utf-8")
+        created = True
+    try:
+        st = fresh()
+        app = MicApp(st)
+        async with app.run_test(size=(110, 32)) as pilot:
+            assert await boot(app, pilot)
+            await pilot.press("8")
+            assert app.current_view == "manager"
+            app.query_one("#mgr-vosk").highlighted = 0
+            await pilot.pause()
+            before = len(models_manager.list_vosk_models())
+            app._mgr_delete()
+            await pilot.pause()
+            assert type(app.screen).__name__ == "ConfirmModal"
+            await pilot.click("#confirm-no")
+            await pilot.pause()
+            after = len(models_manager.list_vosk_models())
+            assert before == after, "cancel must not delete"
+    finally:
+        if created:
+            shutil.rmtree(fake, ignore_errors=True)
     print("FLOW 5 OK: manager delete confirm + cancel keeps files")
 
 
@@ -333,8 +349,44 @@ async def flow_log_pane():
 
 async def flow_wizard_audio_and_details():
     st = fresh()
-    # --- wizard on first run, Esc skips ---
+    # --- wizard on first run: full stepped flow language->provider->confirm ---
     app = MicApp(st, wizard=True)
+    async with app.run_test(size=(110, 32)) as pilot:
+        assert await boot(app, pilot)
+        assert type(app.screen).__name__ == "Wizard"
+        wizard = app.screen
+        # step 1: language - filter to German, Enter-select advances
+        lang_filter = wizard.query_one("#wizard-lang-filter")
+        lang_filter.focus()
+        for ch in "ger":
+            await pilot.press(ch)
+            await pilot.pause(0.2)
+        await pilot.pause(0.3)
+        lang_list = wizard.query_one("#wizard-lang-list")
+        lang_list.focus()
+        lang_list.highlighted = 0
+        await pilot.pause()
+        lang_list.action_select()
+        await pilot.pause(0.4)
+        assert wizard.step == 1, f"expected provider step, at {wizard.step}"
+        # step 2: provider - pick gemini (index 1), Enter advances
+        prov_list = wizard.query_one("#wizard-provider-list")
+        prov_list.focus()
+        prov_list.highlighted = 1
+        await pilot.pause()
+        prov_list.action_select()
+        await pilot.pause(0.4)
+        assert wizard.step == 2, f"expected summary step, at {wizard.step}"
+        # summary shows picks; Finish dismisses with the result
+        summary = str(wizard.query_one("#wizard-summary").render())
+        assert "German" in summary and "gemini" in summary.lower(), summary[:120]
+        wizard.query_one("#wizard-next").press()
+        await pilot.pause(0.5)
+        assert type(app.screen).__name__ != "Wizard"
+        assert st["language"] == "de" and st["provider"] == "gemini_proxy", \
+            (st["language"], st["provider"])
+    # --- wizard Esc still skips on a fresh boot ---
+    app = MicApp(fresh(), wizard=True)
     async with app.run_test(size=(110, 32)) as pilot:
         assert await boot(app, pilot)
         assert type(app.screen).__name__ == "Wizard"
@@ -382,7 +434,7 @@ async def flow_wizard_audio_and_details():
         await pilot.pause(0.3)
         detail = str(app.query_one("#provider-detail").render())
         assert "proxy" in detail.lower() and "gemini" in detail.lower(), detail[:120]
-    print("FLOW 11 OK: wizard skip + threshold tuner + provider detail")
+    print("FLOW 11 OK: stepped wizard (lang->provider->confirm) + skip + audio modal + provider detail")
 
 
 async def flow_boot_timing():
