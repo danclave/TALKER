@@ -47,6 +47,7 @@ jobs:
         source ../../.venv/bin/activate || . ../../.venv/Scripts/activate
         uv pip install -r requirements.txt
         uv pip install pyinstaller
+        uv pip install pillow  # build-time only: processes splash.png for --splash
 
     - name: Get PyInstaller cache directory
       id: pyinstaller-cache-dir
@@ -76,9 +77,17 @@ jobs:
         if [ "${{ runner.os }}" == "Windows" ]; then
           ./build.bat
         else
-          # Run PyInstaller directly on Unix systems
-          # Note: --icon parameter works differently on different platforms but PyInstaller handles it
-          python -m PyInstaller --onefile --name talker_mic --icon=talker_mic.ico --hidden-import=gemini_proxy --hidden-import=whisper_local --hidden-import=whisper_api main.py
+          # Unix: same feature set as build.bat (vosk provider, size excludes)
+          # minus --splash (needs Tcl/Tk runtime on the runner - not worth the flakiness)
+          python -m PyInstaller --onefile --name talker_mic --icon=talker_mic.ico \
+            --hidden-import=gemini_proxy --hidden-import=whisper_local --hidden-import=whisper_api --hidden-import=vosk_local \
+            --collect-binaries vosk --collect-data vosk \
+            --exclude-module matplotlib --exclude-module pandas \
+            --exclude-module scipy --exclude-module IPython \
+            --exclude-module pytest --exclude-module sphinx --exclude-module setuptools \
+            --exclude-module wheel --exclude-module pydoc_data --exclude-module onnxruntime \
+            --copy-metadata textual --copy-metadata rich \
+            main.py
         fi
 
     - name: Get short SHA
