@@ -43,8 +43,8 @@ To get started, you'll need to download a few separate components.
 1.  It is recommended to use a mod manager like [Mod Organizer 2](https://lazystalker.blogspot.com/2020/11/mod-organizer-2-stalker-anomaly-setup.html).
 2.  Install the TALKER source code zip you downloaded like any other Anomaly mod.
 3.  If you plan to use voice chat, open the `TALKER-Mic-*.zip` archive you downloaded for your platform:
-    - **Windows**: Extract `talker_mic.exe` and `launch_mic.bat` into the mod's root folder (e.g., `E:\GAMMA\mods\TALKER`).
-    - **Linux/macOS**: Extract `talker_mic` and `launch_mic.bat` into the mod's root folder. You may need to make `talker_mic` executable (`chmod +x talker_mic`). But you are on linux, so figure it out.
+    - **Windows**: Extract `talker_mic.exe` into the mod's root folder (e.g., `E:\GAMMA\mods\TALKER`).
+    - **Linux/macOS**: Extract `talker_mic` into the mod's root folder. You may need to make `talker_mic` executable (`chmod +x talker_mic`). But you are on linux, so figure it out.
 
 ### Step 2: Set Up Your AI Provider
 You need to connect TALKER to an AI service. This is a one-time setup.
@@ -83,11 +83,12 @@ If you are using a paid service (OpenAI and Openrouter support only) and prefer 
 
 ### Step 3: Launch and Play
 1.  If you are using the API Proxy (Option A), make sure `proxy_app.exe` is running.
-2.  If you plan to use voice chat, run `launch_mic.bat` (or `talker_mic.exe` directly). A configuration menu opens where you pick:
+2.  If you plan to use voice chat, run `talker_mic.exe` (Windows) or `./talker_mic` (Linux/macOS). A configuration menu opens where you pick:
     *   **Transcription provider**: Whisper local (offline, 100 languages), Vosk local (offline, ultra-light ~40 MB models), or Gemini via the API proxy (best quality).
     *   **Language**: always set explicitly (searchable list, English/Russian first).
     *   **Whisper model size** and, for Gemini, the **voice model fallback chain**.
     Settings are saved to `talker_mic_settings.json` next to the exe and can be changed any time by simply starting the app again.
+3.  Still in the menu, you can use **"Test transcription"** to record yourself and immediately see what the selected provider hears - handy for comparing models and languages before playing.
 3.  Launch S.T.A.L.K.E.R. Anomaly.
 
 ### Step 4: Configure In-Game Settings (MCM)
@@ -125,7 +126,7 @@ Now you're ready to play! You can talk to NPCs using two methods:
 *   **Voice Chat**: Hold `Left Alt` to speak.
 *   **Text Chat**: Press `Enter` to open a chat box and type.
 
-**Note on API Keys & `launch_mic.bat`**: If you chose the Direct API Key and don't want to create the `.key` file manually, you can run `launch_mic.bat` once. It will ask for your key and save it for you. After this one-time setup, you only need to run the launcher when you want to use voice chat.
+**Note on local models & disk cache**: Local providers download their models once and cache them on disk, so subsequent starts work offline. Whisper models land in the Hugging Face cache (`~/.cache/huggingface/hub`), Vosk models in a `vosk_models/` folder next to the executable.
 
 ---
 

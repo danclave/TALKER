@@ -15,7 +15,6 @@ on:
   push:
     paths:
       - 'mic_python/python/**'
-      - 'launch_mic.bat'
       - '.github/workflows/build.yml'
       - 'cliff.toml'
 
@@ -99,7 +98,6 @@ jobs:
         else
           cp mic_python/python/dist/talker_mic "$stagingDir/"
         fi
-        cp launch_mic.bat "$stagingDir/"
         echo "--- Staging directory contents ---"
         ls -R $stagingDir
         echo "------------------------------------"
@@ -367,8 +365,7 @@ jobs:
         FILE_TABLE="| File | Description |
         |------|-------------|
         | \`talker_mic.exe\` | Main executable for **Windows** |
-        | \`talker_mic\` | Main executable for **Linux** and **macOS** |
-        | \`launch_mic.bat\` | Setup script - use it to launch |"
+        | \`talker_mic\` | Main executable for **Linux** and **macOS** |"
 
         # List archives
         WINDOWS_ARCHIVE=$(echo "${{ steps.archive.outputs.ASSET_PATHS }}" | tr ' ' '\n' | grep 'Windows' || echo "N/A")

@@ -206,8 +206,11 @@ def _summary(settings):
     return lines
 
 
-def run_menu(settings):
-    """Interactive menu. Mutates and returns the settings dict."""
+def run_menu(settings, on_test=None):
+    """Interactive menu. Mutates and returns the settings dict.
+
+    on_test: optional callback(app_settings) run for the "Test transcription" entry.
+    """
     print("=" * 50)
     print(" TALKER Mic - Configuration")
     print("=" * 50)
@@ -221,6 +224,8 @@ def run_menu(settings):
         print("  4) Change language")
         print("  5) Whisper model size")
         print("  6) Gemini voice models")
+        if on_test is not None:
+            print("  7) Test transcription (speak into your mic)")
         print("  0) Exit")
         choice = _input("  Select: ")
 
@@ -240,6 +245,13 @@ def run_menu(settings):
             settings["whisper_model"] = pick_whisper_model(settings["whisper_model"])
         elif choice == "6":
             settings["gemini_models"] = pick_gemini_models(list(settings["gemini_models"]))
+        elif choice == "7" and on_test is not None:
+            try:
+                on_test(settings)
+            except KeyboardInterrupt:
+                print("\n  Test interrupted.")
+            except Exception as e:
+                print(f"  Test failed: {e}")
         elif choice == "0":
             print("Exiting without starting the microphone service.")
             raise SystemExit(0)

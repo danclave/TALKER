@@ -11,7 +11,8 @@ from watchdog.observers import Observer
 from files import read_file, write_to_file
 from recorder import Recorder
 from banner import print_banner
-import importlib
+from providers import configure_provider
+import mic_test
 
 import settings as settings_module
 
@@ -78,20 +79,8 @@ def resolve_startup_config():
                 app_settings["gemini_models"] = [sys.argv[2]]
         return app_settings
 
-    app_settings, _ = settings_module.run_menu(app_settings)
+    app_settings, _ = settings_module.run_menu(app_settings, on_test=mic_test.run_test)
     return app_settings
-
-
-def configure_provider(provider, app_settings):
-    """Import the provider module and apply per-provider settings."""
-    module = importlib.import_module(provider)
-    configure = getattr(module, "configure", None)
-    if configure:
-        if provider == "whisper_local":
-            configure(model_size=app_settings["whisper_model"])
-        elif provider == "gemini_proxy":
-            configure(model_chain=app_settings["gemini_models"])
-    return module
 
 
 ####################################################################################################
@@ -112,7 +101,6 @@ def main():
         transcription_module = configure_provider(provider, app_settings)
         load_api_key = getattr(transcription_module, "load_openai_api_key")
         transcribe_audio_file_func = getattr(transcription_module, "transcribe_audio_file")
-
         load_api_key()
         recorder = Recorder(AUDIO_FILE)
         Path(COMMAND_FILE).touch()
