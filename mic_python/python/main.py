@@ -65,6 +65,31 @@ COMMANDS = {
 # STARTUP CONFIG RESOLUTION
 ####################################################################################################
 
+def _lazy_test_func():
+    """Resolve mic_test.run_test on first call (heavy import deferred)."""
+    import mic_test
+    return mic_test.run_test
+
+
+def _lazy_on_test(app_settings, status=None, stop_requested=None,
+                  on_recording=None, on_level=None):
+    """Signature-compatible stand-in for mic_test.run_test; imports heavy
+    modules only when a radio check actually runs (the TUI loading screen
+    covers the startup import instead)."""
+    return _lazy_test_func()(app_settings, status=status,
+                             stop_requested=stop_requested,
+                             on_recording=on_recording, on_level=on_level)
+
+
+def _close_splash():
+    """Hide the PyInstaller splash (onefile) if it is showing."""
+    try:
+        import pyi_splash  # type: ignore
+        pyi_splash.close()
+    except Exception:
+        pass
+
+
 def resolve_startup_config():
     """Decide provider/model/language for this session.
 
@@ -83,7 +108,12 @@ def resolve_startup_config():
                 app_settings["gemini_models"] = [sys.argv[2]]
             elif app_settings["provider"] == "custom_proxy":
                 app_settings["custom_models"] = [sys.argv[2]]
-        _enable_console_logging()  # CLI users get console diagnostics
+        # CLI bypass mode: console banner + diagnostics, splash closed
+        print("-" * 50)
+        print_banner("TALKER")
+        print("-" * 50)
+        _close_splash()
+        _enable_console_logging()
         return app_settings
 
     # Full TUI for interactive terminals; plain menu fallback for piped stdin.
@@ -92,12 +122,19 @@ def resolve_startup_config():
             import tui
         except Exception as e:
             print(f"[WARN] TUI unavailable ({e}), falling back to the plain menu.")
+            _close_splash()
             _enable_console_logging()
         else:
-            import mic_test  # heavy imports happen behind the loading screen
-            app_settings = tui.run_tui(app_settings, on_test=mic_test.run_test)
+            # heavy imports (numpy/sounddevice) run behind the loading screen;
+            # tui.run_tui closes the PyInstaller splash when it paints
+            app_settings = tui.run_tui(app_settings, on_test=_lazy_on_test)
             return app_settings
 
+    # console modes (plain menu): banner + diagnostics + splash closed now
+    print("-" * 50)
+    print_banner("TALKER")
+    print("-" * 50)
+    _close_splash()
     _enable_console_logging()
     import mic_test
     app_settings, _ = settings_module.run_menu(app_settings, on_test=mic_test.run_test)
@@ -111,9 +148,10 @@ def resolve_startup_config():
 def main():
     observer = None
     try:
-        print("-"*50)
-        print_banner("TALKER")
-        print("-"*50)
+        if len(sys.argv) > 1 and sys.argv[1] in settings_module.VALID_PROVIDERS:
+            # CLI bypass mode prints its own banner inside resolve_startup_
+            # config's console path; nothing to do here
+            pass
 
         app_settings = resolve_startup_config()
         provider = app_settings["provider"]

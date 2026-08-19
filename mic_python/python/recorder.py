@@ -7,6 +7,59 @@ import numpy as np
 import sounddevice as sd
 import soundfile as sf
 
+class LevelMonitor:
+    """Always-on mic level sampler for live UI feedback (no recording).
+
+    Owns a tiny InputStream; exposes get_level() like Recorder so the UI
+    can share rendering code. Safe to stop/restart on device switches.
+    """
+
+    RATE = 16000
+    CHANNELS = 1
+
+    def __init__(self, device=None):
+        self.device = device
+        self._stream = None
+        self._lock = threading.Lock()
+        self._level = None
+
+    def start(self):
+        with self._lock:
+            if self._stream is not None:
+                return
+            try:
+                self._stream = sd.InputStream(samplerate=self.RATE,
+                                              channels=self.CHANNELS,
+                                              dtype="int16",
+                                              device=self.device,
+                                              callback=self._callback)
+                self._stream.start()
+            except Exception as e:
+                logging.warning("LevelMonitor could not open input stream: %s", e)
+                self._stream = None
+
+    def stop(self):
+        with self._lock:
+            if self._stream is not None:
+                try:
+                    self._stream.stop()
+                    self._stream.close()
+                except Exception:
+                    pass
+                self._stream = None
+            self._level = None
+
+    def _callback(self, indata, frames, time_info, status):
+        import numpy as np
+        level = float(np.abs(indata).mean())
+        with self._lock:
+            self._level = level
+
+    def get_level(self):
+        with self._lock:
+            return self._level
+
+
 class Recorder:
     def __init__(self, output_file=None, silence_threshold=2.0, silence_level=1000,
                  device=None):

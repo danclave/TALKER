@@ -27,7 +27,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.reactive import reactive
-from textual.screen import ModalScreen
+from textual.screen import ModalScreen, Screen
 from textual.timer import Timer
 from textual.widgets import (
     Button, ContentSwitcher, Footer, Input, Label, ListItem, ListView,
@@ -66,6 +66,9 @@ VIEWS = [
     ("manager", "Model Manager"),
 ]
 VIEW_KEYS = [k for k, _ in VIEWS]
+
+INIT_STEPS = ["warming up the PDA", "importing audio engine",
+              "scanning model cache", "listing microphones", "pinging the proxy"]
 
 PINNED_LANGS = ["en", "en-gb", "ru", "uk", "pl", "es"]
 
@@ -327,7 +330,12 @@ ART_CELLS = sum(len(line) for line in TALKER_ART)
 
 
 class LoadingScreen(ModalScreen):
-    """Startup screen: TALKER ascii-art fills as init steps complete."""
+    """Startup screen: TALKER ascii-art fills as init steps complete.
+
+    Shown as the app's INITIAL screen (get_default_screen) so it is the
+    first thing painted - no default-screen flash. The fill eases toward
+    each completed step's target so it never stalls or teleports.
+    """
 
     DEFAULT_CSS = """
     LoadingScreen { align: center middle; }
@@ -335,11 +343,12 @@ class LoadingScreen(ModalScreen):
     #load-step { color: #5f735f; margin-top: 1; }
     """
 
-    progress = reactive(0.0)
+    target = reactive(0.0)
+    _fill = 0.0   # eased value actually rendered
 
     def __init__(self, steps: list):
         super().__init__()
-        self._steps = list(steps)   # names of upcoming steps
+        self._steps = list(steps)
         self._done_steps = 0
 
     def compose(self) -> ComposeResult:
@@ -347,10 +356,27 @@ class LoadingScreen(ModalScreen):
             yield Static(self._render_art(), id="load-art")
             yield Static(self._step_text(), id="load-step")
 
-    def _render_art(self) -> Text:
-        """Art with `progress` fraction of cells filled (dim -> LCD green)."""
+    def on_mount(self) -> None:
+        self.set_interval(0.07, self._ease_tick)
+
+    def _ease_tick(self) -> None:
+        if self._fill < self.target:
+            # ease toward target; slower near the end so it never snaps
+            remaining = self.target - self._fill
+            step = max(0.004, remaining * 0.12)
+            self._fill = min(self.target, self._fill + step)
+            self._repaint()
+
+    def _repaint(self) -> None:
+        try:
+            self.query_one("#load-art", Static).update(self._render_art(self._fill))
+        except Exception:
+            pass
+
+    def _render_art(self, fraction: float = 0.0) -> Text:
+        """Art with `fraction` of cells filled (dim -> LCD green)."""
         t = Text()
-        remaining = int(self.progress * ART_CELLS)
+        remaining = int(fraction * ART_CELLS)
         for line in TALKER_ART:
             filled = max(0, min(len(line), remaining))
             t.append(line[:filled], style=ACCENT)
@@ -365,12 +391,11 @@ class LoadingScreen(ModalScreen):
         return "ready."
 
     def advance(self, step_name: str = None) -> None:
-        """One init step finished: bump the fill and label."""
+        """One init step finished: raise the fill target and update label."""
         self._done_steps += 1
-        self.progress = min(1.0, self._done_steps / len(self._steps))
+        self.target = min(1.0, self._done_steps / len(self._steps))
         try:
             self.query_one("#load-step", Static).update(self._step_text())
-            self.query_one("#load-art", Static).update(self._render_art())
         except Exception:
             pass
 
@@ -554,31 +579,50 @@ class Wizard(ModalScreen):
         self.query_one("#wizard-lang-filter", Input).focus()
 
 
+# modal meter: fixed absolute scale so the threshold marker is meaningful
+MODAL_METER_MAX = 4000
+
+
 class AudioSettingsModal(ModalScreen):
-    """Microphone picker + silence threshold tuner."""
+    """Microphone picker + silence threshold tuner with a LIVE level meter.
+
+    The meter runs the whole time the modal is open (unless a radio check
+    is recording) so you can watch how loud you are, flip microphones,
+    and move the threshold to where speech clearly crosses it.
+    """
 
     BINDINGS = [Binding("escape", "close", "Close", show=False)]
 
-    def __init__(self, settings: dict):
+    def __init__(self, settings: dict, app_ref=None):
         super().__init__()
         self.settings = settings
+        self._app = app_ref
+        self._monitor = None          # recorder.LevelMonitor, lazy import
+        self._display_level = 0.0
 
     def compose(self) -> ComposeResult:
         with Vertical(classes="modalbox"):
             yield Static("Audio settings", classes="HelpBody")
             yield Static("Microphone (applies immediately):", classes="HelpBody")
             yield OptionList(id="audio-devices")
+            yield Static("LIVE INPUT - watch your level against the threshold",
+                         classes="HelpBody")
+            yield Static(self._meter_render(0.0), id="modal-meter")
+            yield Static("", id="modal-meter-status")
             with Horizontal(id="thr-row"):
                 yield Button("-", id="thr-down", classes="small")
                 yield Static("", id="thr-val")
                 yield Button("+", id="thr-up", classes="small")
             yield Static("Threshold = how loud input must be to count as "
-                         "speech. Watch the Radio Check meter: below the tick "
-                         "counts as silence.", classes="HelpBody")
+                         "speech. The | marker on the meter IS the threshold - "
+                         "bar left of it counts as silence.",
+                         classes="HelpBody")
             yield Button("Done", id="audio-done", variant="primary")
 
     def on_mount(self) -> None:
         self._refresh()
+        self.set_interval(1 / 15, self._meter_tick)
+        self._ensure_monitor()
         app = self.app
 
         def _load():
@@ -592,6 +636,66 @@ class AudioSettingsModal(ModalScreen):
             app.call_from_thread(self._apply_devices, devices)
 
         threading.Thread(target=_load, daemon=True).start()
+
+    # ---- live monitor lifecycle
+    def _ensure_monitor(self) -> None:
+        if self._app is not None and self._app.recording:
+            return  # never fight the radio check for the device
+        if self._monitor is not None:
+            return
+        try:
+            from recorder import LevelMonitor
+            self._monitor = LevelMonitor(device=self.settings.get("input_device"))
+            self._monitor.start()
+        except Exception as e:
+            logging.warning("live monitor unavailable: %s", e)
+            self._monitor = None
+
+    def _stop_monitor(self) -> None:
+        if self._monitor is not None:
+            self._monitor.stop()
+            self._monitor = None
+
+    def _meter_tick(self) -> None:
+        level = self._monitor.get_level() if self._monitor else None
+        if level is not None:
+            self._display_level = level
+        try:
+            self.query_one("#modal-meter", Static).update(
+                self._meter_render(self._display_level))
+            threshold = int(self.settings.get("silence_level", 1000))
+            speaking = self._display_level >= threshold
+            status = self.query_one("#modal-meter-status", Static)
+            if self._app is not None and self._app.recording:
+                status.update(Text("paused - radio check is recording", style=MUTED))
+            elif level is None and self._monitor is None:
+                status.update(Text("monitor unavailable", style=MUTED))
+            else:
+                status.update(Text.assemble(
+                    (f"level {int(self._display_level):4d}", TEXT),
+                    (f"  threshold {threshold}", "dim"),
+                    ("  SPEECH", ACCENT) if speaking else ("  silence", AMBER),
+                ))
+        except Exception:
+            pass
+
+    def _meter_render(self, level: float) -> Text:
+        """20-cell bar on a fixed 0..MODAL_METER_MAX scale; threshold marker."""
+        cells = int(round(20 * min(level, MODAL_METER_MAX) / MODAL_METER_MAX))
+        threshold = int(self.settings.get("silence_level", 1000))
+        thr_pos = int(round(20 * min(threshold, MODAL_METER_MAX) / MODAL_METER_MAX))
+        bar = Text()
+        filled_style = ACCENT if level >= threshold else AMBER
+        for i in range(20):
+            if i == thr_pos:
+                bar.append("|", style=RUST)
+            elif i < cells:
+                bar.append("█", style=filled_style)
+            else:
+                bar.append("░", style="dim")
+        if threshold >= MODAL_METER_MAX:
+            bar.append(" |max", style=RUST)
+        return bar
 
     def _apply_devices(self, devices) -> None:
         try:
@@ -625,11 +729,9 @@ class AudioSettingsModal(ModalScreen):
                 return
         else:
             return
-        self._apply_devices(self._devices_cache())
-
-    @staticmethod
-    def _devices_cache():
-        return []
+        # restart the live monitor on the new device
+        self._stop_monitor()
+        self._ensure_monitor()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         bid = event.button.id
@@ -642,10 +744,15 @@ class AudioSettingsModal(ModalScreen):
             self.settings["silence_level"] = min(8000, current + 250)
             self._refresh()
         elif bid == "audio-done":
+            self._stop_monitor()
             self.dismiss(True)
 
     def action_close(self) -> None:
+        self._stop_monitor()
         self.dismiss(True)
+
+    def on_unmount(self) -> None:
+        self._stop_monitor()
 
 
 class ProviderPickModal(ModalScreen):
@@ -839,6 +946,10 @@ class MicApp(App):
     # LAYOUT
     # =======================================================================
     def compose(self) -> ComposeResult:
+        # main UI lives on the default screen; the loader is pushed on top
+        yield from self.compose_ui()
+
+    def compose_ui(self) -> ComposeResult:
         with Horizontal(id="topbar"):
             yield Static("TALKER PDA v2", id="topbar-left")
             yield Static("", id="topbar-mid")
@@ -974,35 +1085,35 @@ class MicApp(App):
         yield Footer()
 
     def on_mount(self) -> None:
-        frame = self.query_one("#frame")
-        frame.border_title = "TALKER PDA"
-        frame.border_subtitle = "v2"
-        self.query_one("#content", ContentSwitcher).current = "home"
-        self._refresh_nav()
-
-        # loading screen while real init work happens in the background
-        steps = ["warming up the PDA", "importing audio engine",
-                 "scanning model cache", "listing microphones",
-                 "pinging the proxy"]
-        loader = LoadingScreen(steps)
-        self.push_screen(loader)
-        self._init_worker(loader)
+        # main UI is composed on the default screen; set it up, then cover
+        # it with the loader while real init work runs
+        self._setup_main_ui()
+        self._loader = LoadingScreen(INIT_STEPS)
+        self.push_screen(self._loader)
+        self._init_worker(self._loader)
 
     @work(thread=True, group="init", exclusive=True)
     def _init_worker(self, loader: LoadingScreen) -> None:
+        from time import perf_counter as _pc
+        t0 = _pc()
+
         def done(name: str):
             self.call_from_thread(loader.advance, name)
 
+        logging.info("boot: init worker start")
         done("warming up")
         try:
-            import mic_test  # heavy: numpy/sounddevice via recorder
+            import numpy  # noqa: F401  (recorder pulls it anyway)
+            import sounddevice  # noqa: F401  (the genuinely slow import)
             done("audio engine")
         except Exception as e:
-            logging.error("audio engine import failed: %s", e)
+            logging.error("boot: audio engine import failed: %s", e)
             done("audio engine")
+        logging.info("boot: audio engine ready at %.2fs", _pc() - t0)
         models_manager.list_vosk_models()      # warms the disk scan
         models_manager.list_whisper_models()
         done("model cache")
+        logging.info("boot: cache scan done at %.2fs", _pc() - t0)
         try:
             import sounddevice as sd
             sd.query_devices()
@@ -1012,15 +1123,38 @@ class MicApp(App):
         import proxy_common
         proxy_common.check_proxy()
         done("proxy")
+        logging.info("boot: init complete at %.2fs - switching to app", _pc() - t0)
 
-        self.call_from_thread(self._finish_init)
+        # brief 100% hold, then swap the loading screen for the real UI
+        import time as _time
+        _time.sleep(0.25)
+        self.call_from_thread(self._show_main_ui)
 
-    def _finish_init(self) -> None:
-        """Pop the loading screen and start the interactive bits."""
+    def _show_main_ui(self) -> None:
+        """Pop the loading screen; the main UI (default screen) is beneath."""
         try:
             self.pop_screen()
-        except Exception:
-            pass
+        except Exception as e:
+            logging.error("boot: could not pop loading screen: %s", e)
+
+    def _ui(self, selector, widget_type=None):
+        """Query a widget on the base (main UI) screen, not the topmost
+        modal/loader - handlers must keep working under any popup."""
+        base = self.screen_stack[0] if self.screen_stack else None
+        if base is None:
+            from textual.css.query import NoMatches
+            raise NoMatches("no screens mounted")
+        if widget_type is not None:
+            return base.query_one(selector, widget_type)
+        return base.query_one(selector)
+
+    def _setup_main_ui(self) -> None:
+        """Configure the composed main UI on the default screen."""
+        frame = self._ui("#frame")
+        frame.border_title = "TALKER PDA"
+        frame.border_subtitle = "v2"
+        self._ui("#content", ContentSwitcher).current = "home"
+        self._refresh_nav()
         self._refresh_manager()
         self._log_handler = _RingHandler(self._log_buf)
         logging.getLogger().addHandler(self._log_handler)
@@ -1052,7 +1186,7 @@ class MicApp(App):
     # =======================================================================
     def _tick_clock(self) -> None:
         try:
-            right = self.query_one("#topbar-right", Static)
+            right = self._ui("#topbar-right", Static)
             disk_mb = (sum(e[2] for e in models_manager.list_vosk_models()) +
                        sum(e[2] for e in models_manager.list_whisper_models()))
             proxy_icon = "?" if self._proxy_ok is None else \
@@ -1067,7 +1201,7 @@ class MicApp(App):
                 ("   ", "dim"),
                 (datetime.now().strftime("%H:%M"), TEXT),
             ))
-            mid = self.query_one("#topbar-mid", Static)
+            mid = self._ui("#topbar-mid", Static)
             p = self.settings["provider"]
             model = self._current_model_label()
             mid.update(f"{p.replace('_', ' ')}  |  {model}  |  "
@@ -1121,7 +1255,7 @@ class MicApp(App):
 
     def _refresh_nav(self) -> None:
         ready = self._ready_map()
-        nav = self.query_one("#nav", ListView)
+        nav = self._ui("#nav", ListView)
         index = nav.index
         nav.clear()
         for i, (key, label) in enumerate(VIEWS):
@@ -1150,9 +1284,9 @@ class MicApp(App):
 
     def _goto(self, view: str) -> None:
         self.current_view = view
-        self.query_one("#content", ContentSwitcher).current = view
+        self._ui("#content", ContentSwitcher).current = view
         try:
-            self.query_one("#nav", ListView).index = VIEW_KEYS.index(view)
+            self._ui("#nav", ListView).index = VIEW_KEYS.index(view)
         except Exception:
             pass
         focus_map = {"provider": "#provider-list", "language": "#lang-filter",
@@ -1160,7 +1294,7 @@ class MicApp(App):
                      "custom": "#custom-input"}
         if view in focus_map:
             try:
-                self.query_one(focus_map[view]).focus()
+                self._ui(focus_map[view]).focus()
             except Exception:
                 pass
 
@@ -1169,7 +1303,7 @@ class MicApp(App):
 
     def action_focus_filter(self) -> None:
         self._goto("language")
-        self.query_one("#lang-filter", Input).focus()
+        self._ui("#lang-filter", Input).focus()
 
     def action_help(self) -> None:
         self.push_screen(HelpModal())
@@ -1187,7 +1321,7 @@ class MicApp(App):
         self._proxy_ok = ok
         for sel in ("#gemini-proxy-line", "#custom-proxy-line"):
             try:
-                line = self.query_one(sel, Static)
+                line = self._ui(sel, Static)
                 line.update(self._proxy_line())
                 line.set_class(ok, "ok")
                 line.set_class(not ok, "bad")
@@ -1242,8 +1376,8 @@ class MicApp(App):
 
     def _refresh_strips(self) -> None:
         try:
-            self.query_one("#setup-strip", Static).update(self._setup_strip())
-            self.query_one("#cache-strip", Static).update(self._cache_strip())
+            self._ui("#setup-strip", Static).update(self._setup_strip())
+            self._ui("#cache-strip", Static).update(self._cache_strip())
         except Exception:
             pass
 
@@ -1281,9 +1415,9 @@ class MicApp(App):
 
     def _refresh_dashboard(self) -> None:
         try:
-            self.query_one("#card-provider", Button).label = self._card_provider()
-            self.query_one("#card-language", Button).label = self._card_language()
-            self.query_one("#card-model", Button).label = self._card_model()
+            self._ui("#card-provider", Button).label = self._card_provider()
+            self._ui("#card-language", Button).label = self._card_language()
+            self._ui("#card-model", Button).label = self._card_model()
         except Exception:
             pass
         self._refresh_nav()
@@ -1293,7 +1427,7 @@ class MicApp(App):
     # =======================================================================
     def watch_recording(self, recording: bool) -> None:
         try:
-            badge = self.query_one("#rec-badge", Static)
+            badge = self._ui("#rec-badge", Static)
             if recording:
                 badge.add_class("on")
                 badge.update("* REC")
@@ -1309,7 +1443,7 @@ class MicApp(App):
             return
         self._rec_blink = not self._rec_blink
         try:
-            self.query_one("#rec-badge", Static).update(
+            self._ui("#rec-badge", Static).update(
                 "* REC" if self._rec_blink else "  REC")
         except Exception:
             pass
@@ -1331,8 +1465,8 @@ class MicApp(App):
 
     def _meter_update(self, pct: int, silence_remaining, elapsed: float) -> None:
         try:
-            self.query_one("#meter", Static).update(self._meter_render(pct))
-            status = self.query_one("#meter-status", Static)
+            self._ui("#meter", Static).update(self._meter_render(pct))
+            status = self._ui("#meter-status", Static)
             if silence_remaining is not None:
                 status.update(Text.assemble(
                     (f"{elapsed:4.1f}s", "dim"),
@@ -1355,7 +1489,7 @@ class MicApp(App):
 
     def _set_heard(self, text: str, stats: str) -> None:
         try:
-            panel = self.query_one("#heard-panel", Static)
+            panel = self._ui("#heard-panel", Static)
             panel.update(self._heard_render(text or "", stats))
             panel.set_class(bool(text), "filled")
         except Exception:
@@ -1368,7 +1502,7 @@ class MicApp(App):
 
     def _refresh_history(self) -> None:
         try:
-            hist = self.query_one("#history", Static)
+            hist = self._ui("#history", Static)
             if not self._history:
                 hist.update("")
                 return
@@ -1428,7 +1562,7 @@ class MicApp(App):
         elif btn == "card-model":
             self._open_model_pick()
         elif btn == "audio-open":
-            self.push_screen(AudioSettingsModal(self.settings),
+            self.push_screen(AudioSettingsModal(self.settings, app_ref=self),
                              lambda _: (self._mark_dirty(),
                                         self._refresh_dashboard()))
         elif btn == "btn-start":
@@ -1531,14 +1665,14 @@ class MicApp(App):
         if event.option_list.id == "provider-list":
             data = getattr(event.option, "id", None)
             try:
-                self.query_one("#provider-detail", Static).update(
+                self._ui("#provider-detail", Static).update(
                     self._provider_detail(data))
             except Exception:
                 pass
 
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id == "lang-filter":
-            lang_list = self.query_one("#lang-list", OptionList)
+            lang_list = self._ui("#lang-list", OptionList)
             lang_list.clear_options()
             lang_list.add_options(self._language_options(event.value))
 
@@ -1644,7 +1778,7 @@ class MicApp(App):
         return rows
 
     def _whisper_download(self) -> None:
-        ol = self.query_one("#whisper-list", OptionList)
+        ol = self._ui("#whisper-list", OptionList)
         idx = ol.highlighted
         ids = [(getattr(o, "id", "") or "") for o in ol._options]
         if idx is None or not (0 <= idx < len(ids)) or not ids[idx]:
@@ -1686,7 +1820,7 @@ class MicApp(App):
         return rows
 
     def _gem_highlighted(self):
-        ol = self.query_one("#gemini-list", OptionList)
+        ol = self._ui("#gemini-list", OptionList)
         idx = ol.highlighted
         if idx is None or not (0 <= idx < len(self._gem_order)):
             return None
@@ -1733,7 +1867,7 @@ class MicApp(App):
 
     def _custom_add(self) -> None:
         try:
-            entry = self.query_one("#custom-input", Input).value.strip()
+            entry = self._ui("#custom-input", Input).value.strip()
         except Exception:
             return
         if not entry:
@@ -1751,7 +1885,7 @@ class MicApp(App):
             return
         chain.append(entry)
         try:
-            self.query_one("#custom-input", Input).value = ""
+            self._ui("#custom-input", Input).value = ""
         except Exception:
             pass
         self._reload_list("#custom-list", self._custom_options())
@@ -1763,7 +1897,7 @@ class MicApp(App):
             pass
 
     def _custom_highlighted(self):
-        ol = self.query_one("#custom-list", OptionList)
+        ol = self._ui("#custom-list", OptionList)
         idx = ol.highlighted
         if idx is None or not (0 <= idx < len(self._custom_order)):
             return None
@@ -1827,15 +1961,15 @@ class MicApp(App):
 
     def _refresh_manager(self) -> None:
         try:
-            vosk_list = self.query_one("#mgr-vosk", OptionList)
+            vosk_list = self._ui("#mgr-vosk", OptionList)
             vosk_list.clear_options()
             vosk_list.add_options(self._mgr_vosk_options())
-            whisper_list = self.query_one("#mgr-whisper", OptionList)
+            whisper_list = self._ui("#mgr-whisper", OptionList)
             whisper_list.clear_options()
             whisper_list.add_options(self._mgr_whisper_options())
             total = (sum(e[2] for e in models_manager.list_vosk_models()) +
                      sum(e[2] for e in models_manager.list_whisper_models()))
-            self.query_one("#mgr-location", Static).update(
+            self._ui("#mgr-location", Static).update(
                 Text(f"vosk: {models_manager.VOSK_DIR}\n"
                      f"whisper: {models_manager.HF_HUB_DIR}\n"
                      f"total on disk: ~{total} MB  |  * = in active use",
@@ -1846,7 +1980,7 @@ class MicApp(App):
 
     def _mgr_delete(self) -> None:
         ol_id = "#mgr-vosk" if self._mgr_focus == "vosk" else "#mgr-whisper"
-        ol = self.query_one(ol_id, OptionList)
+        ol = self._ui(ol_id, OptionList)
         idx = ol.highlighted
         entries = (models_manager.list_vosk_models() if self._mgr_focus == "vosk"
                    else models_manager.list_whisper_models())
@@ -1867,7 +2001,7 @@ class MicApp(App):
 
     # ---- helpers
     def _reload_list(self, selector: str, options, highlight=None):
-        ol = self.query_one(selector, OptionList)
+        ol = self._ui(selector, OptionList)
         ol.clear_options()
         ol.add_options(options)
         if highlight is not None:
@@ -1881,8 +2015,8 @@ class MicApp(App):
     # =======================================================================
     def _test_progress(self, message: str, current, total) -> None:
         try:
-            bar = self.query_one("#test-progress", ProgressBar)
-            status = self.query_one("#test-status", Static)
+            bar = self._ui("#test-progress", ProgressBar)
+            status = self._ui("#test-status", Static)
             if total and current is not None:
                 bar.total = 100
                 bar.progress = min(100, int(100 * current / total))
@@ -1901,7 +2035,7 @@ class MicApp(App):
 
     def _test_log(self, msg: str) -> None:
         try:
-            log = self.query_one("#test-log", RichLog)
+            log = self._ui("#test-log", RichLog)
             if msg.startswith("heard:"):
                 log.write(Text(msg, style=f"bold {ACCENT}"))
             elif msg.startswith("[WARN]") or msg.startswith("[ERROR]"):
@@ -1913,8 +2047,8 @@ class MicApp(App):
 
     def _set_test_running(self, running: bool) -> None:
         try:
-            self.query_one("#test-start", Button).disabled = running
-            self.query_one("#test-stop", Button).disabled = not running
+            self._ui("#test-start", Button).disabled = running
+            self._ui("#test-stop", Button).disabled = not running
         except Exception:
             pass
 
@@ -1978,7 +2112,7 @@ class MicApp(App):
     # =======================================================================
     def action_toggle_log(self) -> None:
         try:
-            pane = self.query_one("#logpane")
+            pane = self._ui("#logpane")
             pane.display = not pane.display
         except Exception:
             pass
@@ -1994,13 +2128,13 @@ class MicApp(App):
             if levelno >= logging.WARNING:
                 auto_open = True
         try:
-            log = self.query_one("#applog", RichLog)
+            log = self._ui("#applog", RichLog)
             for levelno, line in records:
                 style = BAD if levelno >= logging.ERROR else (
                     AMBER if levelno >= logging.WARNING else MUTED)
                 log.write(Text(line, style=style))
             if auto_open:
-                self.query_one("#logpane").display = True
+                self._ui("#logpane").display = True
         except Exception:
             pass
 
@@ -2018,8 +2152,36 @@ def run_tui(settings, on_test=None, wizard=None, **_kwargs):
     if wizard is None:
         from settings import SETTINGS_FILE
         wizard = not SETTINGS_FILE.exists()
+
+    # hand the splash baton to the loading screen, then close the splash
+    # right before Textual paints (the loader takes over from here)
+    try:
+        import pyi_splash  # type: ignore
+        pyi_splash.update_text("warming up the PDA...")
+    except Exception:
+        pass
+
     app = MicApp(settings, test_func=on_test, wizard=wizard)
-    result = app.run()
+
+    def _close_splash_once():
+        try:
+            import pyi_splash  # type: ignore
+            pyi_splash.close()
+        except Exception:
+            pass
+
+    # close as soon as the app has painted its first frame
+    original_on_mount = MicApp.on_mount
+
+    def mounted(self):
+        original_on_mount(self)
+        _close_splash_once()
+
+    MicApp.on_mount = mounted
+    try:
+        result = app.run()
+    finally:
+        MicApp.on_mount = original_on_mount
     if result is None:
         print("Exiting without starting the microphone service.")
         raise SystemExit(0)

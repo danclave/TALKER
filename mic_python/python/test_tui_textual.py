@@ -373,8 +373,8 @@ async def flow_wizard_audio_and_details():
         assert st2["silence_level"] == 1100, st2["silence_level"]
         thr = str(modal.query_one("#thr-val").render())
         assert "1100" in thr, thr
-        await pilot.click("#audio-done")
-        await pilot.pause()
+        modal.query_one("#audio-done").press()
+        await pilot.pause(0.3)
         assert type(app.screen).__name__ != "AudioSettingsModal"
         # --- provider detail panel reacts to highlight ---
         await pilot.press("3")
@@ -383,6 +383,31 @@ async def flow_wizard_audio_and_details():
         detail = str(app.query_one("#provider-detail").render())
         assert "proxy" in detail.lower() and "gemini" in detail.lower(), detail[:120]
     print("FLOW 11 OK: wizard skip + threshold tuner + provider detail")
+
+
+async def flow_boot_timing():
+    """Loading screen paints immediately; heavy init advances the fill."""
+    import time as _t
+    from tui import MicApp as MA
+    st = fresh()
+    app = MA(st)
+    async with app.run_test(size=(110, 32)) as pilot:
+        # within a short window the loader must be up with a step label
+        deadline = _t.time() + 5
+        seen_loader = False
+        while _t.time() < deadline:
+            if type(app.screen).__name__ == "LoadingScreen":
+                seen_loader = True
+                break
+            await pilot.pause(0.05)
+        assert seen_loader, "loader must show immediately"
+        loader = app.screen
+        label = str(loader.query_one("#load-step").render())
+        assert "..." in label, label
+        # eased fill reaches target after steps complete (boot waits it out)
+        assert await boot(app, pilot)
+        assert loader.target == 1.0
+    print("FLOW 12 OK: loading screen paints + eased fill completes")
 
 
 async def flow_progress_reporting():
@@ -413,6 +438,7 @@ async def main():
     await flow_dashboard_and_escape()
     await flow_log_pane()
     await flow_wizard_audio_and_details()
+    await flow_boot_timing()
     await flow_progress_reporting()
     # start-autosave last: exits the app
     import settings as settings_module
