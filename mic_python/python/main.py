@@ -9,10 +9,8 @@ from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
 from files import read_file, write_to_file
-from recorder import Recorder
 from banner import print_banner
 from providers import configure_provider, prepare_model
-import mic_test
 
 import settings as settings_module
 
@@ -96,10 +94,12 @@ def resolve_startup_config():
             print(f"[WARN] TUI unavailable ({e}), falling back to the plain menu.")
             _enable_console_logging()
         else:
+            import mic_test  # heavy imports happen behind the loading screen
             app_settings = tui.run_tui(app_settings, on_test=mic_test.run_test)
             return app_settings
 
     _enable_console_logging()
+    import mic_test
     app_settings, _ = settings_module.run_menu(app_settings, on_test=mic_test.run_test)
     return app_settings
 
@@ -127,6 +127,7 @@ def main():
         # use does not stall on a download (progress printed to console)
         prepare_model(app_settings, report=lambda msg, cur, tot: print(
             f"  {msg}" + (f"  [{cur}/{tot} MB]" if tot else "")))
+        from recorder import Recorder
         recorder = Recorder(AUDIO_FILE)
         Path(COMMAND_FILE).touch()
 
@@ -183,7 +184,7 @@ def parse_start_line(line: str):
 # COMMAND HANDLER
 ####################################################################################################
 class CommandHandler(FileSystemEventHandler):
-    def __init__(self, recorder: Recorder, transcribe_func, app_language: str):
+    def __init__(self, recorder, transcribe_func, app_language: str):
         self.recorder = recorder
         self.transcribe_func = transcribe_func
         self.app_language = app_language

@@ -28,6 +28,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.reactive import reactive
 from textual.screen import ModalScreen
+from textual.timer import Timer
 from textual.widgets import (
     Button, ContentSwitcher, Footer, Input, Label, ListItem, ListView,
     OptionList, ProgressBar, RichLog, Static,
@@ -310,6 +311,70 @@ def _lang_tag(code, overrides=None):
     return tag
 
 
+# ---------------------------------------------------------------- loading art
+# 8-line block-letter TALKER; filled left-to-right, top-to-bottom
+TALKER_ART = [
+    "████████╗ █████╗ ██╗     ██╗  ██╗███████╗██████╗ ",
+    "╚══██╔══╝██╔══██╗██║     ██║ ██╔╝██╔════╝██╔══██╗",
+    "   ██║   ███████║██║     █████╔╝ █████╗  ██████╔╝",
+    "   ██║   ██╔══██║██║     ██╔═██╗ ██╔══╝  ██╔══██╗",
+    "   ██║   ██║  ██║███████╗██║  ██╗███████╗██║  ██║",
+    "   ╚═╝   ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝",
+]
+
+ART_WIDTH = max(len(line) for line in TALKER_ART)
+ART_CELLS = sum(len(line) for line in TALKER_ART)
+
+
+class LoadingScreen(ModalScreen):
+    """Startup screen: TALKER ascii-art fills as init steps complete."""
+
+    DEFAULT_CSS = """
+    LoadingScreen { align: center middle; }
+    #load-art { width: auto; }
+    #load-step { color: #5f735f; margin-top: 1; }
+    """
+
+    progress = reactive(0.0)
+
+    def __init__(self, steps: list):
+        super().__init__()
+        self._steps = list(steps)   # names of upcoming steps
+        self._done_steps = 0
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Static(self._render_art(), id="load-art")
+            yield Static(self._step_text(), id="load-step")
+
+    def _render_art(self) -> Text:
+        """Art with `progress` fraction of cells filled (dim -> LCD green)."""
+        t = Text()
+        remaining = int(self.progress * ART_CELLS)
+        for line in TALKER_ART:
+            filled = max(0, min(len(line), remaining))
+            t.append(line[:filled], style=ACCENT)
+            t.append(line[filled:], style="#1a241a")
+            t.append("\n")
+            remaining -= filled
+        return t
+
+    def _step_text(self) -> str:
+        if self._done_steps < len(self._steps):
+            return f"{self._steps[self._done_steps]}..."
+        return "ready."
+
+    def advance(self, step_name: str = None) -> None:
+        """One init step finished: bump the fill and label."""
+        self._done_steps += 1
+        self.progress = min(1.0, self._done_steps / len(self._steps))
+        try:
+            self.query_one("#load-step", Static).update(self._step_text())
+            self.query_one("#load-art", Static).update(self._render_art())
+        except Exception:
+            pass
+
+
 # ---------------------------------------------------------------- log capture
 class _RingHandler(logging.Handler):
     """Feeds formatted log records into a deque drained by the TUI ticker."""
@@ -489,6 +554,246 @@ class Wizard(ModalScreen):
         self.query_one("#wizard-lang-filter", Input).focus()
 
 
+class AudioSettingsModal(ModalScreen):
+    """Microphone picker + silence threshold tuner."""
+
+    BINDINGS = [Binding("escape", "close", "Close", show=False)]
+
+    def __init__(self, settings: dict):
+        super().__init__()
+        self.settings = settings
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="modalbox"):
+            yield Static("Audio settings", classes="HelpBody")
+            yield Static("Microphone (applies immediately):", classes="HelpBody")
+            yield OptionList(id="audio-devices")
+            with Horizontal(id="thr-row"):
+                yield Button("-", id="thr-down", classes="small")
+                yield Static("", id="thr-val")
+                yield Button("+", id="thr-up", classes="small")
+            yield Static("Threshold = how loud input must be to count as "
+                         "speech. Watch the Radio Check meter: below the tick "
+                         "counts as silence.", classes="HelpBody")
+            yield Button("Done", id="audio-done", variant="primary")
+
+    def on_mount(self) -> None:
+        self._refresh()
+        app = self.app
+
+        def _load():
+            try:
+                import sounddevice as sd
+                devices = [(i, d["name"]) for i, d in enumerate(sd.query_devices())
+                           if d.get("max_input_channels", 0) > 0]
+            except Exception as e:
+                logging.warning("Could not list input devices: %s", e)
+                devices = []
+            app.call_from_thread(self._apply_devices, devices)
+
+        threading.Thread(target=_load, daemon=True).start()
+
+    def _apply_devices(self, devices) -> None:
+        try:
+            ol = self.query_one("#audio-devices", OptionList)
+            ol.clear_options()
+            current = self.settings.get("input_device")
+            rows = [Option("Default microphone" +
+                           ("  *" if current is None else ""), id="dev:none")]
+            for idx, name in devices:
+                marker = "  *" if current == idx else ""
+                rows.append(Option(f"{idx}: {name}{marker}", id=f"dev:{idx}"))
+            ol.add_options(rows)
+        except Exception:
+            pass
+
+    def _refresh(self) -> None:
+        try:
+            self.query_one("#thr-val", Static).update(
+                f"threshold {self.settings.get('silence_level', 1000)}")
+        except Exception:
+            pass
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        data = getattr(event.option, "id", None)
+        if data == "dev:none":
+            self.settings["input_device"] = None
+        elif data and data.startswith("dev:"):
+            try:
+                self.settings["input_device"] = int(data[4:])
+            except ValueError:
+                return
+        else:
+            return
+        self._apply_devices(self._devices_cache())
+
+    @staticmethod
+    def _devices_cache():
+        return []
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        bid = event.button.id
+        if bid == "thr-down":
+            current = int(self.settings.get("silence_level", 1000))
+            self.settings["silence_level"] = max(100, current - 250)
+            self._refresh()
+        elif bid == "thr-up":
+            current = int(self.settings.get("silence_level", 1000))
+            self.settings["silence_level"] = min(8000, current + 250)
+            self._refresh()
+        elif bid == "audio-done":
+            self.dismiss(True)
+
+    def action_close(self) -> None:
+        self.dismiss(True)
+
+
+class ProviderPickModal(ModalScreen):
+    """Pick a provider; closes on selection."""
+
+    BINDINGS = [Binding("escape", "close", "Cancel", show=False)]
+
+    def __init__(self, settings: dict):
+        super().__init__()
+        self.settings = settings
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="modalbox"):
+            yield Static("Provider", classes="HelpBody")
+            yield OptionList(*[
+                Option(desc + ("  *" if key == self.settings["provider"] else ""),
+                       id=key)
+                for key, desc in PROVIDERS.items()
+            ], id="pick-provider-list")
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        data = getattr(event.option, "id", None)
+        if data in PROVIDERS:
+            self.dismiss(data)
+        else:
+            self.dismiss(None)
+
+    def action_close(self) -> None:
+        self.dismiss(None)
+
+
+class LanguagePickModal(ModalScreen):
+    """Searchable language picker; closes on selection."""
+
+    BINDINGS = [Binding("escape", "close", "Cancel", show=False)]
+
+    def __init__(self, settings: dict):
+        super().__init__()
+        self.settings = settings
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="modalbox"):
+            yield Static("Language", classes="HelpBody")
+            yield Input(placeholder="filter...", id="pick-lang-filter")
+            yield OptionList(id="pick-lang-list")
+
+    def on_mount(self) -> None:
+        self._refresh("")
+
+    def _refresh(self, query: str):
+        q = query.lower()
+        codes = _language_codes()
+        if q:
+            codes = [c for c in codes if q in LANGUAGES[c].lower() or q in c]
+        rows = [Option(f"{LANGUAGES[c]} ({c})  "
+                       f"{_lang_tag(c, self.settings.get('vosk_model_overrides'))}"
+                       + ("  *" if c == self.settings["language"] else ""),
+                       id=f"lang:{c}") for c in codes[:80]]
+        try:
+            ol = self.query_one("#pick-lang-list", OptionList)
+            ol.clear_options()
+            ol.add_options(rows or [Option("(no match)")])
+        except Exception:
+            pass
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id == "pick-lang-filter":
+            self._refresh(event.value)
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        data = getattr(event.option, "id", None)
+        if data and data.startswith("lang:"):
+            self.dismiss(data[5:])
+        else:
+            self.dismiss(None)
+
+    def action_close(self) -> None:
+        self.dismiss(None)
+
+
+class WhisperPickModal(ModalScreen):
+    """Pick a whisper size; closes on selection."""
+
+    BINDINGS = [Binding("escape", "close", "Cancel", show=False)]
+
+    def __init__(self, settings: dict):
+        super().__init__()
+        self.settings = settings
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="modalbox"):
+            yield Static("Whisper size", classes="HelpBody")
+            yield OptionList(*[
+                Option(f"{name}  {desc}"
+                       + (" [cached]" if models_manager.whisper_model_cached(name) else "")
+                       + ("  *" if name == self.settings["whisper_model"] else ""),
+                       id=name)
+                for name, desc in WHISPER_MODELS.items()
+            ], id="pick-whisper-list")
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        self.dismiss(getattr(event.option, "id", None))
+
+    def action_close(self) -> None:
+        self.dismiss(None)
+
+
+class VoskPickModal(ModalScreen):
+    """Pick a vosk model for the current language; closes on selection."""
+
+    BINDINGS = [Binding("escape", "close", "Cancel", show=False)]
+
+    def __init__(self, settings: dict):
+        super().__init__()
+        self.settings = settings
+
+    def compose(self) -> ComposeResult:
+        code = self.settings["language"]
+        info = vosk_model_info(code)
+        with Vertical(classes="modalbox"):
+            yield Static(f"Vosk model for {LANGUAGES.get(code, code)}",
+                         classes="HelpBody")
+            yield OptionList(id="pick-vosk-list")
+
+    def on_mount(self) -> None:
+        code = self.settings["language"]
+        options = vosk_model_options(code)
+        override = (self.settings.get("vosk_model_overrides") or {}).get(code)
+        rows = []
+        for i, (name, size) in enumerate(options):
+            label = f"{name}  (~{size} MB)"
+            if i == 0:
+                label += "  [latest]"
+            if override == name or (i == 0 and not override):
+                label += "  *"
+            rows.append(Option(label, id=name))
+        try:
+            self.query_one("#pick-vosk-list", OptionList).add_options(rows)
+        except Exception:
+            pass
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        self.dismiss(getattr(event.option, "id", None))
+
+    def action_close(self) -> None:
+        self.dismiss(None)
+
+
 # ---------------------------------------------------------------- app
 class MicApp(App):
     CSS = CSS
@@ -568,7 +873,7 @@ class MicApp(App):
                             yield Static("On GO LIVE: settings are stashed and the "
                                          "selected model is prepared (downloads on "
                                          "first use).", id="dash-note")
-                        with Vertical(id="test", classes="pane"):
+                        with VerticalScroll(id="test", classes="pane"):
                             yield Static("Radio Check", classes="pane-title")
                             yield Label("Press Start, then speak. The meter shows "
                                         "your live mic level; recording stops when "
@@ -592,21 +897,7 @@ class MicApp(App):
                                              variant="primary")
                                 yield Button("Stop recording", id="test-stop",
                                              variant="warning", disabled=True)
-                            with Vertical(id="audio-settings"):
-                                yield Label("AUDIO - microphone & silence threshold",
-                                            classes="section")
-                                yield OptionList(id="device-list")
-                                with Horizontal(id="thr-row"):
-                                    yield Button("-", id="thr-down",
-                                                 classes="small")
-                                    yield Static(
-                                        f"threshold {self.settings.get('silence_level', 1000)}",
-                                        id="thr-val")
-                                    yield Button("+", id="thr-up",
-                                                 classes="small")
-                                    yield Label("sensitivity: higher = mic must be "
-                                                "louder to count as speech",
-                                                classes="hint")
+                                yield Button("Audio settings...", id="audio-open")
                         with VerticalScroll(id="provider", classes="pane"):
                             yield Static("Provider", classes="pane-title")
                             yield Label("Whisper is the recommended offline choice. "
@@ -688,6 +979,48 @@ class MicApp(App):
         frame.border_subtitle = "v2"
         self.query_one("#content", ContentSwitcher).current = "home"
         self._refresh_nav()
+
+        # loading screen while real init work happens in the background
+        steps = ["warming up the PDA", "importing audio engine",
+                 "scanning model cache", "listing microphones",
+                 "pinging the proxy"]
+        loader = LoadingScreen(steps)
+        self.push_screen(loader)
+        self._init_worker(loader)
+
+    @work(thread=True, group="init", exclusive=True)
+    def _init_worker(self, loader: LoadingScreen) -> None:
+        def done(name: str):
+            self.call_from_thread(loader.advance, name)
+
+        done("warming up")
+        try:
+            import mic_test  # heavy: numpy/sounddevice via recorder
+            done("audio engine")
+        except Exception as e:
+            logging.error("audio engine import failed: %s", e)
+            done("audio engine")
+        models_manager.list_vosk_models()      # warms the disk scan
+        models_manager.list_whisper_models()
+        done("model cache")
+        try:
+            import sounddevice as sd
+            sd.query_devices()
+            done("microphones")
+        except Exception:
+            done("microphones")
+        import proxy_common
+        proxy_common.check_proxy()
+        done("proxy")
+
+        self.call_from_thread(self._finish_init)
+
+    def _finish_init(self) -> None:
+        """Pop the loading screen and start the interactive bits."""
+        try:
+            self.pop_screen()
+        except Exception:
+            pass
         self._refresh_manager()
         self._log_handler = _RingHandler(self._log_buf)
         logging.getLogger().addHandler(self._log_handler)
@@ -793,10 +1126,17 @@ class MicApp(App):
         nav.clear()
         for i, (key, label) in enumerate(VIEWS):
             ok = ready.get(key)
-            dot = "[green]O[/]" if ok else f"[{AMBER}]-[/]"
-            row = Text.assemble((f"{i + 1} ", "dim"),
-                                (dot + " ", ""),
-                                (label, ""))
+            row = Text.assemble(
+                (f"{i + 1} ", "dim"),
+                ("O", ACCENT if ok else "dim"),
+                (" ", ""),
+                ("-", AMBER) if not ok else (" ", ""),
+                (label, ""),
+            ) if not ok else Text.assemble(
+                (f"{i + 1} ", "dim"),
+                ("O ", ACCENT),
+                (label, ""),
+            )
             nav.append(ListItem(Static(row)))
         if index is None or not (0 <= index < len(VIEWS)):
             index = VIEW_KEYS.index(self.current_view)
@@ -863,7 +1203,8 @@ class MicApp(App):
         return Text("x proxy: NOT reachable - start it, then Refresh in Model Manager")
 
     # =======================================================================
-    # DEVICE PICKER
+    # DEVICE PICKER (populated inside AudioSettingsModal; kept here for
+    # potential status display)
     # =======================================================================
     @work(thread=True, group="devices", exclusive=True)
     def _list_devices(self) -> None:
@@ -874,21 +1215,7 @@ class MicApp(App):
         except Exception as e:
             logging.warning("Could not list input devices: %s", e)
             devices = []
-        self.call_from_thread(self._apply_devices, devices)
-
-    def _apply_devices(self, devices) -> None:
         self._devices = devices
-        try:
-            ol = self.query_one("#device-list", OptionList)
-            ol.clear_options()
-            rows = [Option("Default microphone", id="dev:none")]
-            current = self.settings.get("input_device")
-            for idx, name in devices:
-                marker = "  *" if current == idx else ""
-                rows.append(Option(f"{idx}: {name}{marker}", id=f"dev:{idx}"))
-            ol.add_options(rows)
-        except Exception:
-            pass
 
     # =======================================================================
     # SIDEBAR STRIPS / DASHBOARD
@@ -1092,13 +1419,18 @@ class MicApp(App):
     # =======================================================================
     def on_button_pressed(self, event: Button.Pressed) -> None:
         btn = event.button.id
-        cards = {"card-provider": "provider", "card-language": "language"}
-        model_target = {"whisper_local": "whisper", "gemini_proxy": "gemini",
-                        "custom_proxy": "custom", "vosk_local": "whisper"}
-        if btn in cards:
-            self._goto(cards[btn])
+        if btn == "card-provider":
+            self.push_screen(ProviderPickModal(self.settings),
+                             self._apply_provider_pick)
+        elif btn == "card-language":
+            self.push_screen(LanguagePickModal(self.settings),
+                             self._apply_language_pick)
         elif btn == "card-model":
-            self._goto(model_target.get(self.settings["provider"], "whisper"))
+            self._open_model_pick()
+        elif btn == "audio-open":
+            self.push_screen(AudioSettingsModal(self.settings),
+                             lambda _: (self._mark_dirty(),
+                                        self._refresh_dashboard()))
         elif btn == "btn-start":
             self.action_start()
         elif btn == "btn-save":
@@ -1121,10 +1453,6 @@ class MicApp(App):
             self._custom_delete()
         elif btn == "whisper-download":
             self._whisper_download()
-        elif btn == "thr-down":
-            self._tune_threshold(-250)
-        elif btn == "thr-up":
-            self._tune_threshold(250)
         elif btn == "mgr-delete":
             self._mgr_delete()
         elif btn == "mgr-refresh":
@@ -1136,18 +1464,38 @@ class MicApp(App):
             if self._test_stop is not None:
                 self._test_stop.set()
 
-    def _tune_threshold(self, delta: int) -> None:
-        current = int(self.settings.get("silence_level", 1000))
-        self.settings["silence_level"] = max(100, min(8000, current + delta))
-        self._mark_dirty()
-        self._refresh_audio_settings()
+    # ---- popup result handlers
+    def _apply_provider_pick(self, key) -> None:
+        if key in PROVIDERS:
+            self.settings["provider"] = key
+            self._mark_dirty()
+            self._refresh_dashboard()
+            try:
+                self.notify(f"provider: {key}", title="set")
+            except Exception:
+                pass
 
-    def _refresh_audio_settings(self) -> None:
-        try:
-            self.query_one("#thr-val", Static).update(
-                f"threshold {self.settings.get('silence_level', 1000)}")
-        except Exception:
-            pass
+    def _apply_language_pick(self, code) -> None:
+        if code:
+            self._select_language(code)
+
+    def _open_model_pick(self) -> None:
+        p = self.settings["provider"]
+        if p == "whisper_local":
+            def _apply(name):
+                if name in WHISPER_MODELS:
+                    self.settings["whisper_model"] = name
+                    self._mark_dirty()
+                    self._refresh_dashboard()
+            self.push_screen(WhisperPickModal(self.settings), _apply)
+        elif p == "vosk_local" and vosk_model_options(self.settings["language"]):
+            def _apply(name):
+                if name:
+                    self._apply_model_choice(self.settings["language"], name)
+            self.push_screen(VoskPickModal(self.settings), _apply)
+        else:
+            # gemini/custom chains need the full panes (reorder buttons)
+            self._goto("gemini" if p == "gemini_proxy" else "custom")
 
     # =======================================================================
     # OPTION LISTS
@@ -1174,21 +1522,6 @@ class MicApp(App):
             self._mark_dirty()
             self._refresh_dashboard()
             self._reload_list("#whisper-list", self._whisper_options())
-        elif ol.id == "device-list":
-            if data == "dev:none":
-                self.settings["input_device"] = None
-            elif data.startswith("dev:"):
-                try:
-                    self.settings["input_device"] = int(data[4:])
-                except ValueError:
-                    return
-            self._mark_dirty()
-            self._apply_devices(self._devices)
-            try:
-                self.notify("microphone updated - verify with a radio check",
-                            title="mic")
-            except Exception:
-                pass
         elif ol.id == "mgr-vosk":
             self._mgr_focus = "vosk"
         elif ol.id == "mgr-whisper":

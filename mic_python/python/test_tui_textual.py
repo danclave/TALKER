@@ -16,6 +16,25 @@ def fresh():
     return st
 
 
+async def boot(app, pilot, timeout=40.0):
+    """Wait out the loading screen (and optionally wizard) so flows start
+    on an interactive screen."""
+    import time as _t
+    deadline = _t.time() + timeout
+    while _t.time() < deadline:
+        name = type(app.screen).__name__
+        if name == "LoadingScreen":
+            await pilot.pause(0.25)
+            continue
+        if name == "Wizard" and getattr(app, "_wizard", False):
+            return True   # wizard is the expected interactive state
+        if name == "Wizard":
+            await pilot.pause(0.25)
+            continue
+        return True
+    return False
+
+
 async def flow_defaults():
     """Factory defaults: whisper small recommended; custom provider present."""
     import settings as s
@@ -34,6 +53,7 @@ async def flow_language():
     st = fresh()
     app = MicApp(st)
     async with app.run_test(size=(110, 32)) as pilot:
+        assert await boot(app, pilot)
         # --- ordering: pinned, then whisper-supported, then vosk-only ---
         options = app._language_options("")
         ids = [getattr(o, "id", "") for o in options]
@@ -51,6 +71,7 @@ async def flow_language():
         assert "39" not in ru_label, f"small vosk size must not be shown: {ru_label}"
         assert "whisper + vosk" in ru_label
         # --- selection flow as before ---
+        assert await boot(app, pilot)
         await pilot.press("4")
         assert app.current_view == "language"
         await pilot.click("#lang-filter")
@@ -74,6 +95,7 @@ async def flow_gemini():
     st["provider"] = "gemini_proxy"
     app = MicApp(st)
     async with app.run_test(size=(110, 32)) as pilot:
+        assert await boot(app, pilot)
         await pilot.press("6")
         assert app.current_view == "gemini"
         app.query_one("#gemini-list").highlighted = 0
@@ -92,6 +114,7 @@ async def flow_custom_models():
     st["provider"] = "custom_proxy"
     app = MicApp(st)
     async with app.run_test(size=(110, 32)) as pilot:
+        assert await boot(app, pilot)
         await pilot.press("7")
         assert app.current_view == "custom"
         # bad format rejected
@@ -131,6 +154,7 @@ async def flow_custom_start_guard():
         st["custom_models"] = []
         app = MicApp(st)
         async with app.run_test(size=(110, 32)) as pilot:
+            assert await boot(app, pilot)
             app.action_start()   # must NOT exit: empty chain
             await pilot.pause()
             assert app.is_running, "empty custom chain must block start"
@@ -150,6 +174,7 @@ async def flow_manager_delete_cancel():
     st = fresh()
     app = MicApp(st)
     async with app.run_test(size=(110, 32)) as pilot:
+        assert await boot(app, pilot)
         await pilot.press("8")
         assert app.current_view == "manager"
         app.query_one("#mgr-vosk").highlighted = 0
@@ -192,6 +217,7 @@ async def flow_radio_check():
     try:
         app = MicApp(st, test_func=slow_test)
         async with app.run_test(size=(110, 32)) as pilot:
+            assert await boot(app, pilot)
             await pilot.press("2")
             app._start_test()
             await pilot.pause(1.0)
@@ -223,27 +249,57 @@ async def flow_dashboard_and_escape():
     st = fresh()
     app = MicApp(st)
     async with app.run_test(size=(110, 32)) as pilot:
-        # dashboard cards navigate (return Home between clicks - cards are
-        # only visible there)
+        assert await boot(app, pilot)
+        # provider card opens a POPUP (no navigation), pick second entry
         await pilot.click("#card-provider")
+        await pilot.pause()
+        assert app.current_view == "home", "card must not navigate"
+        assert type(app.screen).__name__ == "ProviderPickModal"
+        prov_list = app.screen.query_one("#pick-provider-list")
+        prov_list.highlighted = 1
+        await pilot.pause()
+        prov_list.action_select()
+        await pilot.pause(0.5)
+        assert st["provider"] == "gemini_proxy", st["provider"]
+        assert type(app.screen).__name__ != "ProviderPickModal"
+        # language card popup: search + pick German
+        await pilot.click("#card-language")
+        await pilot.pause()
+        assert type(app.screen).__name__ == "LanguagePickModal"
+        modal = app.screen
+        inp = modal.query_one("#pick-lang-filter")
+        inp.focus()
+        for ch in "ger":
+            await pilot.press(ch)
+            await pilot.pause(0.2)
+        await pilot.pause(0.3)
+        lang_list = modal.query_one("#pick-lang-list")
+        lang_list.highlighted = 0
+        await pilot.pause()
+        lang_list.action_select()
+        await pilot.pause(0.5)
+        assert st["language"] == "de", st["language"]
+        # model card: whisper provider -> WhisperPickModal
+        st["provider"] = "whisper_local"
+        app._refresh_dashboard()
+        await pilot.click("#card-model")
+        await pilot.pause()
+        assert type(app.screen).__name__ == "WhisperPickModal"
+        wlist = app.screen.query_one("#pick-whisper-list")
+        wlist.highlighted = 1  # base
+        await pilot.pause()
+        wlist.action_select()
+        await pilot.pause(0.5)
+        assert st["whisper_model"] == "base", st["whisper_model"]
+        # escape from a pane still returns home
+        await pilot.press("3")
         await pilot.pause()
         assert app.current_view == "provider"
         await pilot.press("escape")
-        await pilot.click("#card-language")
-        await pilot.pause()
-        assert app.current_view == "language"
-        await pilot.press("escape")
-        await pilot.click("#card-model")
-        await pilot.pause()
-        assert app.current_view == "whisper"  # whisper provider -> whisper pane
-        await pilot.press("escape")
         await pilot.pause()
         assert app.current_view == "home"
-        # nav list reflects current view
-        await pilot.press("3")
-        await pilot.pause()
-        assert app.query_one("#nav").index == 2
-    print("FLOW 7 OK: dashboard cards + escape-home + nav sync")
+        assert app.query_one("#nav").index == 0
+    print("FLOW 7 OK: dashboard popups select+close + escape-home")
 
 
 async def flow_log_pane():
@@ -251,6 +307,7 @@ async def flow_log_pane():
     st = fresh()
     app = MicApp(st)
     async with app.run_test(size=(110, 32)) as pilot:
+        assert await boot(app, pilot)
         pane = app.query_one("#logpane")
         assert pane.display is False, "log pane starts hidden"
         _logging.getLogger().info("diagnostics test line")
@@ -279,24 +336,46 @@ async def flow_wizard_audio_and_details():
     # --- wizard on first run, Esc skips ---
     app = MicApp(st, wizard=True)
     async with app.run_test(size=(110, 32)) as pilot:
+        assert await boot(app, pilot)
         assert type(app.screen).__name__ == "Wizard"
         await pilot.press("escape")
         await pilot.pause()
         assert type(app.screen).__name__ != "Wizard"
         assert app.current_view == "home"
-    # --- threshold tuner ---
-    app = MicApp(fresh())
+    # --- audio settings modal: threshold tuner + device default ---
+    st2 = fresh()
+    app = MicApp(st2)
     async with app.run_test(size=(110, 32)) as pilot:
-        before = st.get("silence_level", 1000)
-        app._tune_threshold(250)          # 1000 -> 1250
-        app._tune_threshold(-2000)        # 1250 -> clamps at 100
+        assert await boot(app, pilot)
+        await pilot.press("2")  # Radio Check
+        assert app.current_view == "test"
+        # no inline device list anymore - it lives in the modal now
+        from textual.css.query import NoMatches
+        try:
+            app.query_one("#device-list")
+            raise AssertionError("device list must not be inline anymore")
+        except NoMatches:
+            pass
+        await pilot.click("#audio-open")
         await pilot.pause()
-        assert app.settings["silence_level"] == 100, app.settings
-        app._tune_threshold(900)          # 100 -> 1000
+        assert type(app.screen).__name__ == "AudioSettingsModal"
+        modal = app.screen
+        for _ in range(5):        # 1000 + 5*250 = 2250
+            modal.query_one("#thr-up").press()
+            await pilot.pause(0.05)
+        for _ in range(11):       # 2250 - 11*250 = clamp at 100... 2250-2750 -> 100
+            modal.query_one("#thr-down").press()
+            await pilot.pause(0.05)
+        assert st2["silence_level"] == 100, st2["silence_level"]
+        for _ in range(4):        # 100 + 1000 = 1100... 100+4*250=1100? no: 100+1000=1100
+            modal.query_one("#thr-up").press()
+            await pilot.pause(0.05)
+        assert st2["silence_level"] == 1100, st2["silence_level"]
+        thr = str(modal.query_one("#thr-val").render())
+        assert "1100" in thr, thr
+        await pilot.click("#audio-done")
         await pilot.pause()
-        assert app.settings["silence_level"] == 1000
-        thr = str(app.query_one("#thr-val").render())
-        assert "1000" in thr, thr
+        assert type(app.screen).__name__ != "AudioSettingsModal"
         # --- provider detail panel reacts to highlight ---
         await pilot.press("3")
         app.query_one("#provider-list").highlighted = 1
@@ -310,6 +389,7 @@ async def flow_progress_reporting():
     st = fresh()
     app = MicApp(st)
     async with app.run_test(size=(110, 32)) as pilot:
+        assert await boot(app, pilot)
         await pilot.press("2")
         app._test_progress("downloading 'x'", 20, 40)
         await pilot.pause()
@@ -344,6 +424,7 @@ async def main():
         st["language"] = "de"
         app = MicApp(st)
         async with app.run_test(size=(110, 32)) as pilot:
+            assert await boot(app, pilot)
             await pilot.click("#btn-start")
             await pilot.pause()
         saved = settings_module.load_settings()
