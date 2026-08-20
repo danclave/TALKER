@@ -11,6 +11,7 @@ This mod is provided free of charge with open code, practice your own due dilige
 ## Table of Contents
 - [How It Works](#how-it-works)
 - [Installation Guide](#installation-guide)
+- [The TALKER PDA (Voice App)](#the-talker-pda-voice-app)
 - [Free Models Guide](#free-models-guide)
 - [Using Local Models](#using-local-models)
 - [Credits](#credits)
@@ -83,18 +84,9 @@ If you are using a paid service (OpenAI and Openrouter support only) and prefer 
 
 ### Step 3: Launch and Play
 1.  If you are using the API Proxy (Option A), make sure `proxy_app.exe` is running.
-2.  If you plan to use voice chat, run `talker_mic.exe` (Windows) or `./talker_mic` (Linux/macOS) - the TALKER PDA, a mouse-enabled interface styled after the in-game device: flat numbered menu with readiness dots, a dashboard home with status cards, Radio Check live test with a REC indicator, and a diagnostics log you can open with `F12`. Keyboard works everywhere too (`1-8` screens, `s` save, `q` quit, `F1` help). There you pick:
-    *   **Transcription provider**:
-        *   **Whisper local (recommended)** - the best offline accuracy across 100 languages. `small` is the recommended size and is fine on any PC from the last decade; `base` is a solid choice for English only; `tiny` is a last resort for very weak systems (noticeably worse even on English); `medium`/`large` are too heavy for gameplay. English automatically uses the specialized `.en` variant of the chosen size.
-        *   **Gemini via the API proxy** - best quality overall. Requires the API proxy running **with Gemini API key(s)** configured (see the Free Models Guide).
-        *   **Custom models (advanced)** - your own fallback chain of any audio-capable model on your proxy. Format is `provider/modelname` (e.g. `gemini/gemini-3.5-flash-lite`, `openai/gpt-4o-audio-preview`). The model must support audio input, and your proxy needs credentials for every provider you enter.
-        *   **Vosk local** - an ultra-light fallback (~30-140 MB per language) for weak/limited systems. Note: noticeably lower accuracy than Whisper on real microphone audio (clean-speech benchmarks flatter it; side-by-side mic tests favor Whisper `small`).
-    *   **Language**: always set explicitly (searchable list, pinned English/Russian/etc. first). Every entry shows whether Vosk and/or Whisper support it, and Vosk model sizes - languages with several Vosk models (e.g. Russian) let you pick which one; the latest is preselected.
-    *   **Whisper model size** and, for Gemini/Custom, the **voice model fallback chain**.
-    Settings are saved to `talker_mic_settings.json` next to the exe (automatically stashed when you start the service) and can be changed any time by simply starting the app again.
-3.  Still in the menu, you can use **"Radio Check"** to record yourself and immediately see what the selected provider hears - handy for comparing models and languages before playing. Models download with a visible progress bar on first use.
-4.  **"Model Manager"** shows every model cached on disk (with sizes and locations) and lets you delete the ones you no longer need.
-5.  Launch S.T.A.L.K.E.R. Anomaly.
+2.  If you plan to use voice chat, run `talker_mic.exe` (Windows) or `./talker_mic` (Linux/macOS). The **TALKER PDA** opens - a mouse-enabled configuration interface styled after the in-game device. A short first-time wizard walks you through picking your language and transcription provider; from then on you land on the dashboard. See the full [TALKER PDA section](#the-talker-pda-voice-app) for everything it can do.
+3.  Configure your provider, language and model in the PDA, optionally run a **Radio Check** to test your microphone, then press **GO LIVE**.
+4.  Launch S.T.A.L.K.E.R. Anomaly.
 
 ### Step 4: Configure In-Game Settings (MCM)
 Once in-game, you need to configure TALKER in the Mod Configuration Menu (MCM) before you can start talking to NPCs.
@@ -131,7 +123,77 @@ Now you're ready to play! You can talk to NPCs using two methods:
 *   **Voice Chat**: Hold `Left Alt` to speak.
 *   **Text Chat**: Press `Enter` to open a chat box and type.
 
-**Note on local models & disk cache**: Local providers download their models once and cache them on disk, so subsequent starts work offline. Whisper models land in the Hugging Face cache (`~/.cache/huggingface/hub`), Vosk models in a `vosk_models/` folder next to the executable.
+**Note on local models & disk cache**: Local providers download their models once and cache them on disk, so subsequent starts work offline. Whisper models land in the Hugging Face cache (`~/.cache/huggingface/hub`), Vosk models in a `vosk_models/` folder next to the executable. The in-app **Model Manager** shows everything cached on disk with sizes and lets you delete what you no longer need.
+
+---
+
+## The TALKER PDA (Voice App)
+
+`talker_mic.exe` is the voice half of TALKER: it records your voice when you hold the in-game talk key and transcribes it with the provider of your choice. Everything is configured in the **TALKER PDA** - a terminal interface styled after the in-game device. The mouse works everywhere, but every action also has a keyboard shortcut.
+
+<!-- SCREENSHOT: PDA dashboard (Home screen with status cards + GO LIVE) -->
+
+### Boot animation
+Every launch greets you with a short animated boot screen - one of ten curated TALKER animations (CRT power-on, geiger ticks, matrix rain, cipher decrypt and friends), picked at random each time. Press **any key** to skip it.
+
+<!-- SCREENSHOT: boot animation (pick a nice frame of one variant) -->
+
+### First-run wizard
+The first time you run the app, a small wizard walks you through the two decisions that matter: **the language you speak** and **who transcribes your voice**. `Esc` skips it; everything remains changeable later, and the wizard only ever appears when no settings file exists.
+
+<!-- SCREENSHOT: first-run wizard, language step -->
+
+### Choosing a provider
+Four transcription providers are available:
+
+| Provider | Needs | Notes |
+|---|---|---|
+| **Whisper local** (recommended) | nothing - fully offline after the model download | Best offline accuracy, 100 languages. `small` is the sweet spot and runs fine on any PC from the last decade; `base` is solid for English only; `tiny` is a last resort for very weak systems. English automatically uses the specialized `.en` variant of the chosen size. |
+| **Gemini proxy** | the API proxy with Gemini API key(s) | Best quality overall; ordered fallback chain of lite models (3.5 -> 3.1). |
+| **Custom models** (advanced) | the API proxy + credentials per provider | Your own fallback chain of *any* audio-capable model on your proxy, format `provider/modelname` (e.g. `gemini/gemini-3.5-flash-lite`, `openai/gpt-4o-audio-preview`). The model must support audio input. |
+| **Vosk local** | nothing - fully offline | Ultra-light (~30-140 MB per language) fallback for weak systems; noticeably lower accuracy than Whisper on real microphone audio. |
+
+<!-- SCREENSHOT: provider picker popup with detail panel -->
+
+### Language
+Always set explicitly - no auto-detection guessing games. The searchable list puts the usual suspects on top (English, British English, Russian, Ukrainian, Polish, Spanish), then all Whisper-supported languages alphabetically, then Vosk-only ones. Every entry shows what supports it (`whisper + vosk`, `whisper`, `vosk only`), and languages with several Vosk models (e.g. Russian) let you choose which one.
+
+<!-- SCREENSHOT: language picker popup with search active -->
+
+### Radio Check
+The live test screen - and your best debugging tool. Press **Start** and speak:
+*   **Live level meter** with the silence threshold marked on it: when your input stays left of the mark, the auto-stop countdown begins. Watch the countdown tick down - you can *see* exactly why recording stops (or why it never does).
+*   The countdown only arms once you actually speak - silence before your first word never counts.
+*   A big **REC** indicator while recording, and the transcription result lands in the **heard** panel with timing stats.
+*   **Play last recording** replays what the mic captured (great for spotting a dead or muffled microphone).
+*   Recent checks are kept in a short history so you can compare providers/languages side by side.
+
+<!-- SCREENSHOT: radio check mid-recording, meter active + countdown -->
+
+### Audio settings
+Opened from Radio Check. This is where microphone problems get solved:
+*   **Microphone picker** - all your input devices, applies immediately.
+*   **Live input monitor** - the same meter as Radio Check, always on, so you can watch your level while you flip microphones or move the threshold.
+*   **Silence threshold tuner** - how loud input must be to count as speech. The marker on the meter *is* the threshold; move it until your speech clearly crosses it.
+*   **Mic gain** (0.5x - 4.0x) - a software volume booster for very quiet microphones. Applies to the recording itself; a red `CLIPPING` warning tells you to back it off.
+*   **Hear yourself** - two modes, both off by default: *live echo* (hear yourself with a slight delay while tuning - use headphones, speakers feed back into the mic; turns itself off when the window closes) and *record & play* (every radio check plays your recording back).
+
+<!-- SCREENSHOT: audio settings modal with live meter + threshold marker -->
+
+### Model manager
+Lists every model cached on disk (Vosk and Whisper) with sizes and disk locations, marks the ones currently in use, shows total disk usage, and deletes what you no longer need.
+
+<!-- SCREENSHOT: model manager with a few cached models -->
+
+### Power-user bits
+*   **`F12`** - diagnostics pane (the app log, color-coded; opens itself on warnings).
+*   **`F2`** - collapse the navigation sidebar to a thin rail.
+*   **`F1`** - help. **`s`** save, **`q`** quit, `1-8` jump between screens, `/` focuses the language filter.
+*   **GO LIVE** stashes your settings automatically; `talker_mic_settings.json` next to the exe holds everything.
+*   **CLI bypass** for scripting: `talker_mic.exe whisper_local small`, `talker_mic.exe gemini_proxy gemini/gemini-3.5-flash-lite`, or `custom_proxy <provider/model>`.
+*   Unsaved changes are marked with a `*` in the sidebar until you save.
+
+<!-- SCREENSHOT: diagnostics pane open (F12) over any screen -->
 
 ---
 
