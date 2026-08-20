@@ -530,23 +530,33 @@ async def flow_audio_modal_gain_and_playback():
         assert monitor.starts == 0 and monitor.stops == 0, \
             (monitor.starts, monitor.stops)
         assert monitor.gain == 2.5, monitor.gain
-        # toggles flip labels and settings, off by default
+        # toggles flip labels and settings, off by default, side by side
         assert st2["monitor_live"] is False and st2["playback_after"] is False
-        modal.query_one("#toggle-live").press()
-        modal.query_one("#toggle-playback").press()
+        live_btn = modal.query_one("#toggle-live")
+        play_btn = modal.query_one("#toggle-playback")
+        assert live_btn.parent is play_btn.parent, "toggles must share one row"
+        live_btn.press()
+        play_btn.press()
         await pilot.pause(0.1)
         assert st2["monitor_live"] is True and st2["playback_after"] is True
         live_label = str(modal.query_one("#toggle-live").render())
         assert "ON" in live_label, live_label
-        modal.query_one("#toggle-live").press()
-        await pilot.pause(0.05)
-        assert st2["monitor_live"] is False
+        # gain +/- buttons must BOTH be inside the modal's visible width
+        modal_region = modal.region
+        for btn_id in ("#gain-down", "#gain-up", "#thr-down", "#thr-up"):
+            r = modal.query_one(btn_id).region
+            assert r.x >= modal_region.x, (btn_id, r, modal_region)
+            assert r.x + r.width <= modal_region.x + modal_region.width + 1, \
+                (btn_id, r, modal_region)
+        # closing the modal auto-disables live echo (record & play persists)
         modal.query_one("#audio-done").press()
-        await pilot.pause(0.3)
+        await pilot.pause(0.4)
         assert type(app.screen).__name__ != "AudioSettingsModal"
+        assert st2["monitor_live"] is False, "echo must end with the modal"
+        assert st2["playback_after"] is True, "record & play stays persistent"
         # play-last button exists and stays disabled without a recording
         assert app.query_one("#test-play").disabled
-    print("FLOW 13 OK: audio modal gain + hear-yourself toggles + play button")
+    print("FLOW 13 OK: gain in-bounds + side-by-side toggles + echo auto-off")
 
 
 async def flow_small_terminal_layout():

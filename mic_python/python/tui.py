@@ -240,7 +240,9 @@ ProgressBar {{ margin-bottom: 1; grid-size: 1; }}
 #thr-row {{ height: 3; }}
 #gain-row {{ height: 3; }}
 #gain-row Button, #thr-row Button {{ min-width: 5; }}
-#thr-val {{ width: auto; color: {ACCENT}; text-style: bold; padding: 1 1; }}
+#hear-row {{ height: auto; }}
+#hear-row Button {{ margin-right: 1; }}
+#thr-val, #gain-val {{ width: auto; color: {ACCENT}; text-style: bold; padding: 1 1; }}
 
 /* ============ inputs & lists ============ */
 Input, OptionList {{
@@ -745,10 +747,12 @@ class AudioSettingsModal(ModalScreen):
                              "flashes CLIPPING, lower it.",
                              classes="HelpBody")
                 yield Static("HEAR YOURSELF", classes="HelpBody")
-                yield Button("", id="toggle-live")
-                yield Button("", id="toggle-playback")
+                with Horizontal(id="hear-row"):
+                    yield Button("", id="toggle-live")
+                    yield Button("", id="toggle-playback")
                 yield Static("Live echo = hear yourself while tuning (use "
-                             "headphones - speakers feed back into the mic). "
+                             "headphones - speakers feed back into the mic); "
+                             "turns itself off when this window closes. "
                              "Record & play = each radio check plays your "
                              "recording back. Both are OFF by default.",
                              classes="HelpBody")
@@ -925,14 +929,28 @@ class AudioSettingsModal(ModalScreen):
                 "playback_after", False)
             self._refresh()
         elif bid == "audio-done":
+            self._shutdown_echo()
             self._stop_monitor()
             self.dismiss(True)
 
+    def _shutdown_echo(self) -> None:
+        """Live echo ends with the popup (record & play stays persistent)."""
+        self.settings["monitor_live"] = False
+        if self._monitor is not None:
+            try:
+                self._monitor.set_playback(False)
+            except Exception:
+                pass
+        self._refresh()
+
     def action_close(self) -> None:
+        self._shutdown_echo()
         self._stop_monitor()
         self.dismiss(True)
 
     def on_unmount(self) -> None:
+        # safety net: never leave echo running behind a closed modal
+        self.settings["monitor_live"] = False
         self._stop_monitor()
 
 

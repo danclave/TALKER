@@ -364,6 +364,18 @@ class AudioMonitor:
                 self._ring = []
                 self._ring_samples = 0
             if not running:
+                # teardown so a later re-enable can open a FRESH stream
+                # (a stale open reference would block _maybe_start_playback)
+                with self._lock:
+                    if self._out_stream is not None:
+                        try:
+                            self._out_stream.stop()
+                            self._out_stream.close()
+                        except Exception:
+                            pass
+                        self._out_stream = None
+                    self._ring = []
+                    self._ring_samples = 0
                 return
             for chunk in ring:
                 pending.put(chunk)

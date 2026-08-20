@@ -141,10 +141,81 @@ def test_playback_toggle_and_file():
     print("TEST 5 OK: playback toggle + fire-and-forget file playback")
 
 
+class FakeOutputStream:
+    def __init__(self):
+        self.stopped = False
+        self.closed = False
+        self.written = []
+
+    def start(self):
+        pass
+
+    def stop(self):
+        self.stopped = True
+
+    def close(self):
+        self.closed = True
+
+    def write(self, data):
+        self.written.append(len(data))
+
+
+def test_live_echo_reenable():
+    """Echo off must TEAR DOWN the output stream so re-enable works.
+
+    Regression: the drain thread's normal exit left _out_stream set, and
+    the stale reference blocked _maybe_start_playback forever (echo
+    worked exactly once).
+    """
+    import recorder as rec2
+    m = rec2.AudioMonitor(playback=True)
+    fake_out = FakeOutputStream()
+
+    # fake the streams (no real audio)
+    m._stream = object()
+    orig_output = rec2.sd.OutputStream
+    rec2.sd.OutputStream = lambda *a, **k: fake_out
+
+    try:
+        # pump audio until the drain thread starts
+        import numpy as np
+        deadline = time.time() + 2
+        while m._out_stream is None and time.time() < deadline:
+            data = np.ones((1600, 1), dtype=np.int16) * 100
+            m._callback(data, 1600, None, None)
+            time.sleep(0.02)
+        assert m._out_stream is fake_out, "drain must open the output stream"
+
+        # disable: drain thread must close + null the stream
+        m.set_playback(False)
+        deadline = time.time() + 2
+        while m._out_stream is not None and time.time() < deadline:
+            time.sleep(0.02)
+        assert m._out_stream is None, "stream reference must be cleared"
+        assert fake_out.stopped and fake_out.closed, "stream must be closed"
+
+        # re-enable: pumping must open a FRESH stream (the regression)
+        m.set_playback(True)
+        fake_out_2 = FakeOutputStream()
+        rec2.sd.OutputStream = lambda *a, **k: fake_out_2
+        deadline = time.time() + 2
+        while m._out_stream is None and time.time() < deadline:
+            data = np.ones((1600, 1), dtype=np.int16) * 100
+            m._callback(data, 1600, None, None)
+            time.sleep(0.02)
+        assert m._out_stream is fake_out_2, "re-enable must open a NEW stream"
+    finally:
+        rec2.sd.OutputStream = orig_output
+        m.set_playback(False)
+        m.stop()
+    print("TEST 6 OK: live echo disable tears down stream; re-enable works")
+
+
 if __name__ == "__main__":
     test_silence_counts_after_speech()
     test_no_speech_timeout()
     test_fixed_grace_still_works()
     test_gain_scales_and_clips()
     test_playback_toggle_and_file()
+    test_live_echo_reenable()
     print("ALL AUDIO FEATURE TESTS PASSED")
