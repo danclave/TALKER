@@ -150,7 +150,7 @@ ListView:focus > ListItem.-highlighted {{
     padding: 1 2 0 2;
 }}
 ContentSwitcher {{ height: 1fr; }}
-.pane {{ height: 1fr; }}
+.pane {{ height: 1fr; padding-bottom: 1; }}  /* keep scroll extent clear of the footer */
 Static.hint, Label.hint {{ color: {MUTED}; margin-bottom: 1; }}
 .pane-title {{
     color: {ACCENT};
@@ -206,7 +206,7 @@ Button.card:hover {{ border: solid {ACCENT}; }}
 .logbox {{
     border: round {BORDER};
     padding: 1;
-    height: 1fr;
+    height: 12;   /* fixed inside the scrollable pane -> pane scrolls cleanly */
     color: {TEXT};
 }}
 ProgressBar {{ margin-bottom: 1; grid-size: 1; }}
@@ -261,9 +261,21 @@ ModalScreen {{ align: center middle; background: {BG} 85%; }}
 .modalbox {{
     width: 64%;
     max-width: 92;
+    max-height: 88%;
     background: {PANEL};
     border: solid {ACCENT};
     padding: 1 2;
+}}
+.modalbox VerticalScroll {{
+    height: 1fr;
+}}
+#audio-devices {{
+    max-height: 8;
+    scrollbar-size: 1 1;
+}}
+.pick-list {{
+    max-height: 12;
+    scrollbar-size: 1 1;
 }}
 Wizard .modalbox {{
     width: 70%;
@@ -272,7 +284,6 @@ Wizard .modalbox {{
 .wizard-step {{ height: 1fr; }}
 .wizard-step OptionList {{ height: 1fr; }}
 HelpBody {{ color: {TEXT}; }}
-.wizard-step {{ height: auto; }}
 
 /* ============ diagnostics log pane ============ */
 #logpane {{
@@ -491,13 +502,14 @@ class ModelPickModal(ModalScreen):
 
     def compose(self) -> ComposeResult:
         with Vertical(classes="modalbox"):
-            yield Static(f"Vosk models for {LANGUAGES.get(self.code, self.code)}",
-                         classes="HelpBody")
-            yield OptionList(*[
-                Option(f"{name}  (~{size} MB)" + ("  [latest]" if i == 0 else ""),
-                       id=name)
-                for i, (name, size) in enumerate(self.options)
-            ], id="model-pick-list")
+            with VerticalScroll():
+                yield Static(f"Vosk models for {LANGUAGES.get(self.code, self.code)}",
+                             classes="HelpBody")
+                yield OptionList(*[
+                    Option(f"{name}  (~{size} MB)" + ("  [latest]" if i == 0 else ""),
+                           id=name)
+                    for i, (name, size) in enumerate(self.options)
+                ], id="model-pick-list", classes="pick-list")
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         self.dismiss(getattr(event.option, "id", None))
@@ -537,7 +549,7 @@ class Wizard(ModalScreen):
                                 id="wizard-lang-filter")
                     yield OptionList(*self._lang_options(""),
                                      id="wizard-lang-list")
-                with Vertical(id="step-provider", classes="wizard-step"):
+                with VerticalScroll(id="step-provider", classes="wizard-step"):
                     yield Static("Who transcribes your voice?", classes="HelpBody")
                     yield OptionList(*self._provider_options(),
                                      id="wizard-provider-list")
@@ -693,38 +705,39 @@ class AudioSettingsModal(ModalScreen):
 
     def compose(self) -> ComposeResult:
         with Vertical(classes="modalbox"):
-            yield Static("Audio settings", classes="HelpBody")
-            yield Static("Microphone (applies immediately):", classes="HelpBody")
-            yield OptionList(id="audio-devices")
-            yield Static("LIVE INPUT - watch your level against the threshold",
-                         classes="HelpBody")
-            yield Static(self._meter_render(0.0), id="modal-meter")
-            yield Static("", id="modal-meter-status")
-            with Horizontal(id="thr-row"):
-                yield Button("-", id="thr-down", classes="small")
-                yield Static("", id="thr-val")
-                yield Button("+", id="thr-up", classes="small")
-            yield Static("Threshold = how loud input must be to count as "
-                         "speech. The | marker on the meter IS the threshold - "
-                         "bar left of it counts as silence.",
-                         classes="HelpBody")
-            with Horizontal(id="gain-row"):
-                yield Button("-", id="gain-down", classes="small")
-                yield Static("", id="gain-val")
-                yield Button("+", id="gain-up", classes="small")
-            yield Static("Mic gain boosts quiet microphones (affects "
-                         "recording AND this meter). If the status line "
-                         "flashes CLIPPING, lower it.",
-                         classes="HelpBody")
-            yield Static("HEAR YOURSELF", classes="HelpBody")
-            yield Button("", id="toggle-live")
-            yield Button("", id="toggle-playback")
-            yield Static("Live echo = hear yourself while tuning (use "
-                         "headphones - speakers feed back into the mic). "
-                         "Record & play = each radio check plays your "
-                         "recording back. Both are OFF by default.",
-                         classes="HelpBody")
-            yield Button("Done", id="audio-done", variant="primary")
+            with VerticalScroll():
+                yield Static("Audio settings", classes="HelpBody")
+                yield Static("Microphone (applies immediately):", classes="HelpBody")
+                yield OptionList(id="audio-devices")
+                yield Static("LIVE INPUT - watch your level against the threshold",
+                             classes="HelpBody")
+                yield Static(self._meter_render(0.0), id="modal-meter")
+                yield Static("", id="modal-meter-status")
+                with Horizontal(id="thr-row"):
+                    yield Button("-", id="thr-down", classes="small")
+                    yield Static("", id="thr-val")
+                    yield Button("+", id="thr-up", classes="small")
+                yield Static("Threshold = how loud input must be to count as "
+                             "speech. The | marker on the meter IS the threshold - "
+                             "bar left of it counts as silence.",
+                             classes="HelpBody")
+                with Horizontal(id="gain-row"):
+                    yield Button("-", id="gain-down", classes="small")
+                    yield Static("", id="gain-val")
+                    yield Button("+", id="gain-up", classes="small")
+                yield Static("Mic gain boosts quiet microphones (affects "
+                             "recording AND this meter). If the status line "
+                             "flashes CLIPPING, lower it.",
+                             classes="HelpBody")
+                yield Static("HEAR YOURSELF", classes="HelpBody")
+                yield Button("", id="toggle-live")
+                yield Button("", id="toggle-playback")
+                yield Static("Live echo = hear yourself while tuning (use "
+                             "headphones - speakers feed back into the mic). "
+                             "Record & play = each radio check plays your "
+                             "recording back. Both are OFF by default.",
+                             classes="HelpBody")
+                yield Button("Done", id="audio-done", variant="primary")
 
     def on_mount(self) -> None:
         self._refresh()
@@ -913,12 +926,13 @@ class ProviderPickModal(ModalScreen):
 
     def compose(self) -> ComposeResult:
         with Vertical(classes="modalbox"):
-            yield Static("Provider", classes="HelpBody")
-            yield OptionList(*[
-                Option(desc + ("  *" if key == self.settings["provider"] else ""),
-                       id=key)
-                for key, desc in PROVIDERS.items()
-            ], id="pick-provider-list")
+            with VerticalScroll():
+                yield Static("Provider", classes="HelpBody")
+                yield OptionList(*[
+                    Option(desc + ("  *" if key == self.settings["provider"] else ""),
+                           id=key)
+                    for key, desc in PROVIDERS.items()
+                ], id="pick-provider-list", classes="pick-list")
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         data = getattr(event.option, "id", None)
@@ -942,9 +956,10 @@ class LanguagePickModal(ModalScreen):
 
     def compose(self) -> ComposeResult:
         with Vertical(classes="modalbox"):
-            yield Static("Language", classes="HelpBody")
-            yield Input(placeholder="filter...", id="pick-lang-filter")
-            yield OptionList(id="pick-lang-list")
+            with VerticalScroll():
+                yield Static("Language", classes="HelpBody")
+                yield Input(placeholder="filter...", id="pick-lang-filter")
+                yield OptionList(id="pick-lang-list", classes="pick-list")
 
     def on_mount(self) -> None:
         self._refresh("")
@@ -991,14 +1006,15 @@ class WhisperPickModal(ModalScreen):
 
     def compose(self) -> ComposeResult:
         with Vertical(classes="modalbox"):
-            yield Static("Whisper size", classes="HelpBody")
-            yield OptionList(*[
-                Option(f"{name}  {desc}"
-                       + (" [cached]" if models_manager.whisper_model_cached(name) else "")
-                       + ("  *" if name == self.settings["whisper_model"] else ""),
-                       id=name)
-                for name, desc in WHISPER_MODELS.items()
-            ], id="pick-whisper-list")
+            with VerticalScroll():
+                yield Static("Whisper size", classes="HelpBody")
+                yield OptionList(*[
+                    Option(f"{name}  {desc}"
+                           + (" [cached]" if models_manager.whisper_model_cached(name) else "")
+                           + ("  *" if name == self.settings["whisper_model"] else ""),
+                           id=name)
+                    for name, desc in WHISPER_MODELS.items()
+                ], id="pick-whisper-list", classes="pick-list")
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         self.dismiss(getattr(event.option, "id", None))
@@ -1020,9 +1036,10 @@ class VoskPickModal(ModalScreen):
         code = self.settings["language"]
         info = vosk_model_info(code)
         with Vertical(classes="modalbox"):
-            yield Static(f"Vosk model for {LANGUAGES.get(code, code)}",
-                         classes="HelpBody")
-            yield OptionList(id="pick-vosk-list")
+            with VerticalScroll():
+                yield Static(f"Vosk model for {LANGUAGES.get(code, code)}",
+                             classes="HelpBody")
+                yield OptionList(id="pick-vosk-list", classes="pick-list")
 
     def on_mount(self) -> None:
         code = self.settings["language"]
@@ -1167,7 +1184,7 @@ class MicApp(App):
                                              id="provider-list")
                             yield Static(self._provider_detail(None),
                                          id="provider-detail")
-                        with Vertical(id="language", classes="pane"):
+                        with VerticalScroll(id="language", classes="pane"):
                             yield Static("Language", classes="pane-title")
                             yield Label("Pinned first, then everything else. "
                                         "Whisper-capable languages come before "
@@ -1185,7 +1202,7 @@ class MicApp(App):
                             with Horizontal():
                                 yield Button("Download / preload highlighted",
                                              id="whisper-download")
-                        with Vertical(id="gemini", classes="pane"):
+                        with VerticalScroll(id="gemini", classes="pane"):
                             yield Static("Gemini Chain - tried top to bottom",
                                          classes="pane-title")
                             yield Label("Requires the API proxy with Gemini API "
@@ -1198,7 +1215,7 @@ class MicApp(App):
                                 yield Button("Toggle on/off", id="gem-toggle")
                                 yield Button("Move up", id="gem-up")
                                 yield Button("Move down", id="gem-down")
-                        with Vertical(id="custom", classes="pane"):
+                        with VerticalScroll(id="custom", classes="pane"):
                             yield Static("Custom Models - your own fallback chain",
                                          classes="pane-title")
                             yield Label("Advanced: any audio-capable model on your "

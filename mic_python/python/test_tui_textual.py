@@ -4,7 +4,7 @@ import logging
 
 logging.getLogger().setLevel(logging.INFO)  # main.py does this in production
 
-from tui import MicApp
+from tui import MicApp, AudioSettingsModal
 from settings import load_settings
 
 
@@ -81,9 +81,12 @@ async def flow_language():
         assert st["language"] == "ru", st
         modal = app.screen
         assert type(modal).__name__ == "ModelPickModal"
-        modal.query_one("#model-pick-list").highlighted = 1
-        await pilot.press("enter")
+        model_list = modal.query_one("#model-pick-list")
+        model_list.focus()
+        model_list.highlighted = 1
         await pilot.pause()
+        model_list.action_select()
+        await pilot.pause(0.4)
         assert st["vosk_model_overrides"].get("ru") == "vosk-model-small-ru-0.22", st
         assert app._dirty
         assert "unsaved" in str(app._setup_strip())
@@ -247,8 +250,9 @@ async def flow_radio_check():
             # level meter updated with bar cells + threshold marker
             meter_text = str(app.query_one("#meter").render())
             assert "|" in meter_text, meter_text
-            # heard panel + history filled after finish
-            await pilot.click("#test-stop")
+            # heard panel + history filled after finish (press Stop directly -
+            # the button row may be below the fold at this terminal size)
+            app.query_one("#test-stop").press()
             await pilot.pause(1.5)
             assert not app.recording
             assert not app.query_one("#test-start").disabled
@@ -347,6 +351,35 @@ async def flow_log_pane():
     print("FLOW 8 OK: log pane toggle + auto-open on errors")
 
 
+class _FakeMonitor:
+    """Headless stand-in for recorder.AudioMonitor - no native audio."""
+
+    def __init__(self, *a, **k):
+        self.playback = bool(k.get("playback", False))
+        self._level = 120.0
+
+    def start(self):
+        pass
+
+    def stop(self):
+        pass
+
+    def get_level(self):
+        return self._level
+
+    def is_clipping(self):
+        return False
+
+    def set_playback(self, enabled):
+        self.playback = bool(enabled)
+
+
+def patch_monitor(modal_cls):
+    """Replace the modal's real monitor with the fake (no PortAudio in tests)."""
+    modal_cls._ensure_monitor = lambda self: setattr(
+        self, "_monitor", _FakeMonitor(playback=self.settings.get("monitor_live")))
+
+
 async def flow_wizard_audio_and_details():
     st = fresh()
     # --- wizard on first run: full stepped flow language->provider->confirm ---
@@ -408,8 +441,8 @@ async def flow_wizard_audio_and_details():
             raise AssertionError("device list must not be inline anymore")
         except NoMatches:
             pass
-        await pilot.click("#audio-open")
-        await pilot.pause()
+        app.query_one("#audio-open").press()
+        await pilot.pause(0.4)
         assert type(app.screen).__name__ == "AudioSettingsModal"
         modal = app.screen
         for _ in range(5):        # 1000 + 5*250 = 2250
@@ -468,8 +501,8 @@ async def flow_audio_modal_gain_and_playback():
     async with app.run_test(size=(110, 32)) as pilot:
         assert await boot(app, pilot)
         await pilot.press("2")
-        await pilot.click("#audio-open")
-        await pilot.pause()
+        app.query_one("#audio-open").press()
+        await pilot.pause(0.4)
         modal = app.screen
         assert type(modal).__name__ == "AudioSettingsModal"
         # gain: 1.0 -> 3.0 via three + presses (0.5 steps)
@@ -499,6 +532,43 @@ async def flow_audio_modal_gain_and_playback():
         # play-last button exists and stays disabled without a recording
         assert app.query_one("#test-play").disabled
     print("FLOW 13 OK: audio modal gain + hear-yourself toggles + play button")
+
+
+async def flow_small_terminal_layout():
+    """60x20 terminal: audio modal and radio check must stay usable."""
+    from textual.containers import VerticalScroll as _VS
+    st = fresh()
+    app = MicApp(st)
+    async with app.run_test(size=(60, 20)) as pilot:
+        assert await boot(app, pilot)
+        # audio modal opens without layout errors, Done exists inside a
+        # scrollable body, device list capped
+        await pilot.press("2")
+        app.query_one("#audio-open").press()
+        await pilot.pause(0.4)
+        assert type(app.screen).__name__ == "AudioSettingsModal"
+        modal = app.screen
+        done = modal.query_one("#audio-done")
+        scroll_parent = done.parent
+        while scroll_parent is not None and not isinstance(scroll_parent, _VS):
+            scroll_parent = scroll_parent.parent
+        assert scroll_parent is not None, "modal body must be a VerticalScroll"
+        dev = modal.query_one("#audio-devices")
+        # rendered height must be capped (<=8 rows) even with many devices
+        assert dev.container_size.height <= 8, dev.container_size
+        modal.query_one("#audio-done").press()
+        await pilot.pause(0.3)
+        # radio check pane: full scroll reaches the last control (not stuck
+        # behind the footer)
+        pane = app.query_one("#test", _VS)
+        pane.scroll_to(y=pane.max_scroll_y, animate=False)
+        await pilot.pause(0.2)
+        last_btn = app.query_one("#audio-open")
+        region = last_btn.region
+        view = pane.container_size.height
+        assert region.y + region.height <= pane.scroll_offset.y + view + 2, \
+            (region, pane.scroll_offset, view)
+    print("FLOW 14 OK: 60x20 modal scrollable + device list capped + pane bottom reachable")
 
 
 async def flow_progress_reporting():
@@ -531,6 +601,7 @@ async def main():
     await flow_wizard_audio_and_details()
     await flow_boot_timing()
     await flow_audio_modal_gain_and_playback()
+    await flow_small_terminal_layout()
     await flow_progress_reporting()
     # start-autosave last: exits the app
     import settings as settings_module
@@ -560,4 +631,5 @@ def models_manager_list():
 
 
 if __name__ == "__main__":
+    patch_monitor(AudioSettingsModal)  # headless: no native audio in Pilot runs
     asyncio.run(main())
