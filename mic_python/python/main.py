@@ -170,6 +170,9 @@ def main():
                             silence_level=app_settings.get("silence_level", 1000),
                             device=app_settings.get("input_device"),
                             gain=app_settings.get("mic_gain", 1.0))
+        # clear any stale command from a previous session/test so the app
+        # never auto-records on startup
+        write_to_file(COMMAND_FILE, "")
         Path(COMMAND_FILE).touch()
 
         handler  = CommandHandler(recorder, transcribe_audio_file_func, app_language)

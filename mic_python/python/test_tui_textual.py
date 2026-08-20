@@ -352,17 +352,24 @@ async def flow_log_pane():
 
 
 class _FakeMonitor:
-    """Headless stand-in for recorder.AudioMonitor - no native audio."""
+    """Headless stand-in for recorder.AudioMonitor - no native audio.
+
+    Also records restarts so flows can assert that property changes
+    (gain/playback) NEVER restart the stream (native crash risk).
+    """
 
     def __init__(self, *a, **k):
         self.playback = bool(k.get("playback", False))
+        self.gain = float(k.get("gain", 1.0))
         self._level = 120.0
+        self.starts = 0
+        self.stops = 0
 
     def start(self):
-        pass
+        self.starts += 1
 
     def stop(self):
-        pass
+        self.stops += 1
 
     def get_level(self):
         return self._level
@@ -372,6 +379,9 @@ class _FakeMonitor:
 
     def set_playback(self, enabled):
         self.playback = bool(enabled)
+
+    def set_gain(self, gain):
+        self.gain = float(gain)
 
 
 def patch_monitor(modal_cls):
@@ -515,6 +525,11 @@ async def flow_audio_modal_gain_and_playback():
         assert st2["mic_gain"] == 2.5, st2["mic_gain"]
         gain_label = str(modal.query_one("#gain-val").render())
         assert "2.5" in gain_label, gain_label
+        # CRITICAL: gain clicks must never restart the monitor (native crash)
+        monitor = modal._monitor
+        assert monitor.starts == 0 and monitor.stops == 0, \
+            (monitor.starts, monitor.stops)
+        assert monitor.gain == 2.5, monitor.gain
         # toggles flip labels and settings, off by default
         assert st2["monitor_live"] is False and st2["playback_after"] is False
         modal.query_one("#toggle-live").press()
@@ -535,7 +550,8 @@ async def flow_audio_modal_gain_and_playback():
 
 
 async def flow_small_terminal_layout():
-    """60x20 terminal: audio modal and radio check must stay usable."""
+    """60x20 terminal: audio modal usable, radio check buttons ALWAYS fully
+    visible without pane scrolling, sidebar collapses."""
     from textual.containers import VerticalScroll as _VS
     st = fresh()
     app = MicApp(st)
@@ -554,21 +570,24 @@ async def flow_small_terminal_layout():
             scroll_parent = scroll_parent.parent
         assert scroll_parent is not None, "modal body must be a VerticalScroll"
         dev = modal.query_one("#audio-devices")
-        # rendered height must be capped (<=8 rows) even with many devices
         assert dev.container_size.height <= 8, dev.container_size
         modal.query_one("#audio-done").press()
         await pilot.pause(0.3)
-        # radio check pane: full scroll reaches the last control (not stuck
-        # behind the footer)
-        pane = app.query_one("#test", _VS)
-        pane.scroll_to(y=pane.max_scroll_y, animate=False)
+        # all four radio check buttons fully on-screen WITHOUT scrolling
+        for btn_id in ("#test-start", "#test-stop", "#test-play", "#audio-open"):
+            region = app.query_one(btn_id).region
+            assert region.y >= 0 and region.y + region.height <= 20, \
+                (btn_id, region)
+        # sidebar collapse: F2 -> rail, title click -> back, F2 persisted
+        await pilot.press("f2")
         await pilot.pause(0.2)
-        last_btn = app.query_one("#audio-open")
-        region = last_btn.region
-        view = pane.container_size.height
-        assert region.y + region.height <= pane.scroll_offset.y + view + 2, \
-            (region, pane.scroll_offset, view)
-    print("FLOW 14 OK: 60x20 modal scrollable + device list capped + pane bottom reachable")
+        assert app._sidebar_collapsed()
+        sidebar_w = app.query_one("#sidebar").container_size.width
+        assert sidebar_w <= 12, sidebar_w
+        app.query_one("#pda-title").press()
+        await pilot.pause(0.2)
+        assert not app._sidebar_collapsed()
+    print("FLOW 14 OK: 60x20 buttons visible + modal scroll + sidebar collapse")
 
 
 async def flow_progress_reporting():

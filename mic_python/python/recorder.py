@@ -288,15 +288,23 @@ class AudioMonitor:
             self._ring = []
             self._ring_samples = 0
 
+    def set_gain(self, gain: float):
+        """Change gain LIVE - no stream restart (rapid PortAudio close+reopen
+        can crash native audio; the callback reads gain per buffer anyway)."""
+        self.gain = float(gain)
+
     def set_playback(self, enabled: bool):
-        """Toggle live echo; restarts cleanly if needed."""
-        if enabled == self.playback:
-            return
-        self.playback = enabled
-        was_running = self._stream is not None
-        self.stop()
-        if was_running:
-            self.start()
+        """Toggle live echo WITHOUT restarting the input stream: the flag is
+        read under lock by the callback/drain thread, which tears the output
+        stream down itself when playback goes off."""
+        with self._lock:
+            if enabled == self.playback:
+                return
+            self.playback = enabled
+            if not enabled:
+                # drop whatever is buffered; drain thread exits on next poll
+                self._ring = []
+                self._ring_samples = 0
 
     def _callback(self, indata, frames, time_info, status):
         data = indata.copy()

@@ -105,14 +105,27 @@ Screen {{
     background: {PANEL};
     border-right: solid {BORDER};
     padding: 1 1 0 1;
+    transition: width 0.15s;
 }}
+#sidebar.collapsed {{ width: 7; min-width: 7; }}
+#sidebar.collapsed #pda-title {{ width: auto; padding: 0 1; background: transparent; }}
+#sidebar.collapsed #pda-title .collapsed-short {{ display: block; }}
+#sidebar.collapsed #pda-sub,
+#sidebar.collapsed .sidebar-section,
+#sidebar.collapsed #setup-strip,
+#sidebar.collapsed #cache-strip {{ display: none; }}
 #pda-title {{
     color: {ACCENT};
     text-style: bold;
     background: {ACCENT_DIM};
     padding: 0 1;
     width: auto;
+    border: none;
+    height: 3;
+    min-width: 0;
+    background-tint: {ACCENT_DIM};
 }}
+#pda-title:hover {{ background: {BORDER_DIM}; }}
 #pda-sub {{
     color: {MUTED};
     margin-bottom: 1;
@@ -225,6 +238,8 @@ ProgressBar {{ margin-bottom: 1; grid-size: 1; }}
 #audio-settings Label.section {{ color: {ACCENT}; text-style: bold; }}
 #device-list {{ border: solid {BORDER}; margin-bottom: 1; }}
 #thr-row {{ height: 3; }}
+#gain-row {{ height: 3; }}
+#gain-row Button, #thr-row Button {{ min-width: 5; }}
 #thr-val {{ width: auto; color: {ACCENT}; text-style: bold; padding: 1 1; }}
 
 /* ============ inputs & lists ============ */
@@ -875,9 +890,12 @@ class AudioSettingsModal(ModalScreen):
             return
         self.settings["mic_gain"] = new
         self._refresh()
-        # gain applies to the live monitor immediately (restart it)
-        self._stop_monitor()
-        self._ensure_monitor()
+        # gain applies LIVE - never restart the stream (native crash risk)
+        if self._monitor is not None:
+            try:
+                self._monitor.set_gain(new)
+            except Exception:
+                pass
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         bid = event.button.id
@@ -898,7 +916,10 @@ class AudioSettingsModal(ModalScreen):
             self.settings["monitor_live"] = enabled
             self._refresh()
             if self._monitor is not None:
-                self._monitor.set_playback(enabled)  # applies live
+                try:
+                    self._monitor.set_playback(enabled)  # flag flip, no restart
+                except Exception:
+                    pass
         elif bid == "toggle-playback":
             self.settings["playback_after"] = not self.settings.get(
                 "playback_after", False)
@@ -1074,6 +1095,7 @@ class MicApp(App):
         Binding("s", "save", "Save"),
         Binding("f1", "help", "Help", key_display="F1"),
         Binding("f12", "toggle_log", "Log", key_display="F12"),
+        Binding("f2", "toggle_sidebar", "Menu", key_display="F2"),
         Binding("escape", "goto_view('home')", "Home", show=False),
         Binding("1", "goto_view('home')", show=False),
         Binding("2", "goto_view('test')", show=False),
@@ -1121,7 +1143,7 @@ class MicApp(App):
         with Vertical(id="frame"):
             with Horizontal(id="main"):
                 with Vertical(id="sidebar"):
-                    yield Label("TALKER PDA", id="pda-title")
+                    yield Button("TALKER PDA", id="pda-title", classes="title-btn")
                     yield Label("zone comms console", id="pda-sub")
                     yield Label("NAVIGATION", classes="sidebar-section")
                     yield ListView(id="nav")
@@ -1150,31 +1172,31 @@ class MicApp(App):
                                          "first use).", id="dash-note")
                         with VerticalScroll(id="test", classes="pane"):
                             yield Static("Radio Check", classes="pane-title")
-                            yield Label("Press Start, then speak. The meter shows "
-                                        "your live mic level; recording stops when "
-                                        "it stays left of the threshold mark.",
-                                        classes="hint")
                             with Horizontal(id="test-statusline"):
                                 yield Static("o idle", id="rec-badge")
                                 yield Static("", id="test-status")
                             with Horizontal(id="meter-row"):
                                 yield Static(self._meter_render(0), id="meter")
                                 yield Static("0.0s", id="meter-status")
-                            yield RichLog(id="test-log", classes="logbox", wrap=True,
-                                          markup=False, max_lines=300)
                             yield ProgressBar(id="test-progress", show_eta=False,
                                               total=100)
+                            with Horizontal():
+                                yield Button("Start", id="test-start",
+                                             variant="primary")
+                                yield Button("Stop", id="test-stop",
+                                             variant="warning", disabled=True)
+                                yield Button("Play last", id="test-play",
+                                             disabled=True)
+                                yield Button("Audio", id="audio-open")
                             yield Static(self._heard_render(None, None),
                                          id="heard-panel")
                             yield Static("", id="history")
-                            with Horizontal():
-                                yield Button("Start radio check", id="test-start",
-                                             variant="primary")
-                                yield Button("Stop recording", id="test-stop",
-                                             variant="warning", disabled=True)
-                                yield Button("Play last recording", id="test-play",
-                                             disabled=True)
-                                yield Button("Audio settings...", id="audio-open")
+                            yield Label("Start, then speak. Recording stops when "
+                                        "the meter stays left of the threshold "
+                                        "mark. Full details in Audio settings.",
+                                        classes="hint")
+                            yield RichLog(id="test-log", classes="logbox", wrap=True,
+                                          markup=False, max_lines=300)
                         with VerticalScroll(id="provider", classes="pane"):
                             yield Static("Provider", classes="pane-title")
                             yield Label("Whisper is the recommended offline choice. "
@@ -1319,6 +1341,11 @@ class MicApp(App):
         frame = self._ui("#frame")
         frame.border_title = "TALKER PDA"
         frame.border_subtitle = "v2"
+        if self.settings.get("sidebar_collapsed"):
+            try:
+                self._ui("#sidebar").add_class("collapsed")
+            except Exception:
+                pass
         self._ui("#content", ContentSwitcher).current = "home"
         self._refresh_nav()
         self._refresh_manager()
@@ -1419,24 +1446,58 @@ class MicApp(App):
         ready["custom"] = bool(self._proxy_ok and self.settings.get("custom_models"))
         return ready
 
+    def _sidebar_collapsed(self) -> bool:
+        try:
+            return self._ui("#sidebar").has_class("collapsed")
+        except Exception:
+            return False
+
+    def action_toggle_sidebar(self) -> None:
+        try:
+            sidebar = self._ui("#sidebar")
+            collapsed = not sidebar.has_class("collapsed")
+            sidebar.set_class(collapsed, "collapsed")
+            self.settings["sidebar_collapsed"] = collapsed
+            self._refresh_nav()
+            try:
+                self.notify("menu expanded" if not collapsed else "menu collapsed",
+                            title="F2")
+            except Exception:
+                pass
+        except Exception:
+            pass
+
     def _refresh_nav(self) -> None:
         ready = self._ready_map()
+        collapsed = self._sidebar_collapsed()
         nav = self._ui("#nav", ListView)
         index = nav.index
         nav.clear()
         for i, (key, label) in enumerate(VIEWS):
             ok = ready.get(key)
-            row = Text.assemble(
-                (f"{i + 1} ", "dim"),
-                ("O", ACCENT if ok else "dim"),
-                (" ", ""),
-                ("-", AMBER) if not ok else (" ", ""),
-                (label, ""),
-            ) if not ok else Text.assemble(
-                (f"{i + 1} ", "dim"),
-                ("O ", ACCENT),
-                (label, ""),
-            )
+            if collapsed:
+                # thin rail: number + status dot only
+                row = Text.assemble(
+                    (f"{i + 1}", "dim"),
+                    ("O", ACCENT if ok else "dim"),
+                ) if ok else Text.assemble(
+                    (f"{i + 1}", "dim"),
+                    ("-", AMBER),
+                )
+            elif ok:
+                row = Text.assemble(
+                    (f"{i + 1} ", "dim"),
+                    ("O ", ACCENT),
+                    (label, ""),
+                )
+            else:
+                row = Text.assemble(
+                    (f"{i + 1} ", "dim"),
+                    ("O", ACCENT if ok else "dim"),
+                    (" ", ""),
+                    ("-", AMBER),
+                    (label, ""),
+                )
             nav.append(ListItem(Static(row)))
         if index is None or not (0 <= index < len(VIEWS)):
             index = VIEW_KEYS.index(self.current_view)
@@ -1742,6 +1803,8 @@ class MicApp(App):
             self.action_save()
         elif btn == "btn-dash-test":
             self._goto("test")
+        elif btn == "pda-title":
+            self.action_toggle_sidebar()
         elif btn == "gem-toggle":
             self._gem_toggle()
         elif btn == "gem-up":
