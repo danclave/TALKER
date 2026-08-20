@@ -4,6 +4,7 @@ import sys
 import time
 import logging
 import tempfile
+import threading
 
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
@@ -57,8 +58,12 @@ COMMANDS = {
     'START'       : 'START-',   # syntax: START-<lang>-<prompt>
     'STOP': 'STOP',
     'DONE': 'DONE',
-    'ERROR': 'ERROR'
+    'ERROR': 'ERROR',
+    'QUIT': 'QUIT'              # clean shutdown (test/admin use; game never sends)
 }
+
+# set by the QUIT command -> main loop exits, releasing audio cleanly
+SHUTDOWN = threading.Event()
 
 
 ####################################################################################################
@@ -183,8 +188,9 @@ def main():
         logging.info("Observer running, watching %s", COMMAND_FILE)
         print(f"Provider: {provider} | Language: {app_language}")
         print("You can now use the in-game key to talk.")
-        while True:
-            time.sleep(1)
+        while not SHUTDOWN.is_set():
+            time.sleep(0.2)
+        logging.info("QUIT received - shutting down cleanly.")
 
     except KeyboardInterrupt:
         logging.info("User interrupt.")
@@ -248,6 +254,16 @@ class CommandHandler(FileSystemEventHandler):
             self._record_session(prompt, lang)
         elif raw.strip() == COMMANDS['STOP']:
             self.recorder.stop_recording()
+        elif raw.strip() == COMMANDS['QUIT']:
+            # clean shutdown: stop any recording, let the main loop exit,
+            # so the audio session is released gracefully (never force-kill
+            # a process holding an audio device)
+            try:
+                if self.recorder.is_recording():
+                    self.recorder.stop_recording()
+            except Exception:
+                pass
+            SHUTDOWN.set()
 
     def _record_session(self, prompt: str = '', language: str | None = None):
         try:

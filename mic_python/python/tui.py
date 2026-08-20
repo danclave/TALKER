@@ -12,6 +12,7 @@
 
 import inspect
 import logging
+import random
 import threading
 from collections import deque
 from datetime import datetime
@@ -348,90 +349,117 @@ def _lang_tag(code, overrides=None):
     return tag
 
 
-# ---------------------------------------------------------------- loading art
-# 8-line block-letter TALKER; filled left-to-right, top-to-bottom
-TALKER_ART = [
-    "████████╗ █████╗ ██╗     ██╗  ██╗███████╗██████╗ ",
-    "╚══██╔══╝██╔══██╗██║     ██║ ██╔╝██╔════╝██╔══██╗",
-    "   ██║   ███████║██║     █████╔╝ █████╗  ██████╔╝",
-    "   ██║   ██╔══██║██║     ██╔═██╗ ██╔══╝  ██╔══██╗",
-    "   ██║   ██║  ██║███████╗██║  ██╗███████╗██║  ██║",
-    "   ╚═╝   ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝",
-]
-
-ART_WIDTH = max(len(line) for line in TALKER_ART)
-ART_CELLS = sum(len(line) for line in TALKER_ART)
+# ---------------------------------------------------------------- loading screen
+# The boot animation lives in loading_variants.py (pure rich renderers,
+# shared with the gallery). BOOT_VARIANTS is the curated set the app
+# randomly picks from at every launch.
+from loading_variants import BOOT_VARIANTS
 
 
 class LoadingScreen(ModalScreen):
-    """Startup screen: TALKER ascii-art fills as init steps complete.
+    """Startup screen: a randomly picked animation plays at its OWN pace.
 
-    Shown as the app's INITIAL screen (get_default_screen) so it is the
-    first thing painted - no default-screen flash. The fill eases toward
-    each completed step's target so it never stalls or teleports.
+    Deliberately NOT synced to real init progress (that kills the fun of
+    it) - the real steps only update the small status line. Rules:
+      - animation runs ~4s, then holds ~2s before the app opens
+      - ANY key skips: animation jumps to its end, and the moment real
+        init is done we go straight to the app
     """
 
     DEFAULT_CSS = """
     LoadingScreen { align: center middle; }
     #load-art { width: auto; }
     #load-step { color: #5f735f; margin-top: 1; }
+    #load-skip { color: #3a4a3a; }
     """
 
-    target = reactive(0.0)
-    _fill = 0.0   # eased value actually rendered
+    TICK_S = 1 / 15
+    SPEED = 0.016            # ~4.2s per full animation (slightly sped up)
+    HOLD_S = 2.0             # pause at 100% before opening the app
 
     def __init__(self, steps: list):
         super().__init__()
         self._steps = list(steps)
         self._done_steps = 0
+        self._variant = random.choice(BOOT_VARIANTS)
+        self.progress = 0.0
+        self._frame = 0
+        self._finished = False
+        self._hold_elapsed = 0.0
+        self._ready = False        # real init finished
+        self._skipped = False
+        self._transitioned = False
 
     def compose(self) -> ComposeResult:
         with Vertical():
-            yield Static(self._render_art(), id="load-art")
+            yield Static(self._variant.render(0.0, 0), id="load-art")
             yield Static(self._step_text(), id="load-step")
+            yield Static("press any key to skip", id="load-skip")
 
     def on_mount(self) -> None:
-        self.set_interval(0.07, self._ease_tick)
+        self.set_interval(self.TICK_S, self._tick)
 
-    def _ease_tick(self) -> None:
-        if self._fill < self.target:
-            # ease toward target; slower near the end so it never snaps
-            remaining = self.target - self._fill
-            step = max(0.004, remaining * 0.12)
-            self._fill = min(self.target, self._fill + step)
-            self._repaint()
+    # ---- animation loop (own pace, independent of init)
+    def _tick(self) -> None:
+        self._frame += 1
+        if not self._finished:
+            self.progress = min(1.0, self.progress + self.SPEED)
+            if self.progress >= 1.0:
+                self._finished = True
+        elif not self._skipped:
+            self._hold_elapsed += self.TICK_S
+        self._repaint()
+        self._maybe_transition()
 
     def _repaint(self) -> None:
         try:
-            self.query_one("#load-art", Static).update(self._render_art(self._fill))
+            self.query_one("#load-art", Static).update(
+                self._variant.render(self.progress, self._frame))
         except Exception:
             pass
 
-    def _render_art(self, fraction: float = 0.0) -> Text:
-        """Art with `fraction` of cells filled (dim -> LCD green)."""
-        t = Text()
-        remaining = int(fraction * ART_CELLS)
-        for line in TALKER_ART:
-            filled = max(0, min(len(line), remaining))
-            t.append(line[:filled], style=ACCENT)
-            t.append(line[filled:], style="#1a241a")
-            t.append("\n")
-            remaining -= filled
-        return t
+    # ---- skip: any key ends the show, then we leave as soon as ready
+    def on_key(self, event) -> None:
+        self._skipped = True
+        if not self._finished:
+            self._finished = True
+            self.progress = 1.0
+            self._repaint()
+        self._maybe_transition()
+
+    # ---- real-init coordination
+    def advance(self, step_name: str = None) -> None:
+        """One init step finished (status line only - not the animation)."""
+        self._done_steps += 1
+        self._update_step_label()
+
+    def mark_ready(self) -> None:
+        self._ready = True
+        self._update_step_label()
+        self._maybe_transition()
 
     def _step_text(self) -> str:
-        if self._done_steps < len(self._steps):
+        if not self._ready and self._done_steps < len(self._steps):
             return f"{self._steps[self._done_steps]}..."
         return "ready."
 
-    def advance(self, step_name: str = None) -> None:
-        """One init step finished: raise the fill target and update label."""
-        self._done_steps += 1
-        self.target = min(1.0, self._done_steps / len(self._steps))
+    def _update_step_label(self) -> None:
         try:
             self.query_one("#load-step", Static).update(self._step_text())
         except Exception:
             pass
+
+    # ---- transition rules
+    def _maybe_transition(self) -> None:
+        if self._transitioned or not self._ready:
+            return
+        hold_done = self._finished and self._hold_elapsed >= self.HOLD_S
+        if self._skipped or hold_done:
+            self._transitioned = True
+            try:
+                self.app._show_main_ui()
+            except Exception:
+                pass
 
 
 # ---------------------------------------------------------------- log capture
@@ -1329,12 +1357,11 @@ class MicApp(App):
         import proxy_common
         proxy_common.check_proxy()
         done("proxy")
-        logging.info("boot: init complete at %.2fs - switching to app", _pc() - t0)
+        logging.info("boot: init complete at %.2fs - handing off to loader", _pc() - t0)
 
-        # brief 100% hold, then swap the loading screen for the real UI
-        import time as _time
-        _time.sleep(0.25)
-        self.call_from_thread(self._show_main_ui)
+        # the loader decides when to open the app: 2s hold after its
+        # animation finishes, or immediately if the user pressed a key
+        self.call_from_thread(loader.mark_ready)
 
     def _show_main_ui(self) -> None:
         """Pop the loading screen; the main UI (default screen) is beneath."""

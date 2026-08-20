@@ -18,12 +18,18 @@ def fresh():
 
 async def boot(app, pilot, timeout=40.0):
     """Wait out the loading screen (and optionally wizard) so flows start
-    on an interactive screen."""
+    on an interactive screen. Presses a key ONCE to skip the boot
+    animation (mirrors real usage); the loader then opens the app as
+    soon as real init finishes."""
     import time as _t
+    pressed = False
     deadline = _t.time() + timeout
     while _t.time() < deadline:
         name = type(app.screen).__name__
         if name == "LoadingScreen":
+            if not pressed:
+                await pilot.press("space")   # skip the animation
+                pressed = True
             await pilot.pause(0.25)
             continue
         if name == "Wizard" and getattr(app, "_wizard", False):
@@ -481,13 +487,15 @@ async def flow_wizard_audio_and_details():
 
 
 async def flow_boot_timing():
-    """Loading screen paints immediately; heavy init advances the fill."""
+    """Boot loader: random curated variant, own-paced animation (NOT synced
+    to init), any key skips, transition only when init is ready."""
     import time as _t
     from tui import MicApp as MA
+    from loading_variants import BOOT_VARIANTS
     st = fresh()
     app = MA(st)
     async with app.run_test(size=(110, 32)) as pilot:
-        # within a short window the loader must be up with a step label
+        # loader paints immediately with one of the curated variants
         deadline = _t.time() + 5
         seen_loader = False
         while _t.time() < deadline:
@@ -497,12 +505,20 @@ async def flow_boot_timing():
             await pilot.pause(0.05)
         assert seen_loader, "loader must show immediately"
         loader = app.screen
+        assert type(loader._variant).__name__ in {type(v).__name__ for v in BOOT_VARIANTS}
         label = str(loader.query_one("#load-step").render())
         assert "..." in label, label
-        # eased fill reaches target after steps complete (boot waits it out)
-        assert await boot(app, pilot)
-        assert loader.target == 1.0
-    print("FLOW 12 OK: loading screen paints + eased fill completes")
+        # animation runs at its own pace (advances without any init steps)
+        p0 = loader.progress
+        await pilot.pause(0.5)
+        assert loader.progress > p0, "animation must run at its own pace"
+        # skip: key press finishes the animation; app opens once init done
+        await pilot.press("space")
+        await pilot.pause(0.2)
+        assert loader._skipped and loader.progress == 1.0
+        assert await boot(app, pilot)          # waits out init + transition
+        assert type(app.screen).__name__ != "LoadingScreen"
+    print("FLOW 12 OK: curated variant + own pace + skip + ready-gated open")
 
 
 async def flow_audio_modal_gain_and_playback():
