@@ -10,7 +10,7 @@ if exist "%~dp0.venv\Scripts\python.exe" (
     set PY=python
 )
 "%PY%" -m PyInstaller --onefile --name talker_mic --icon=talker_mic.ico --splash splash.png ^
-  --hidden-import=gemini_proxy --hidden-import=whisper_local --hidden-import=whisper_api --hidden-import=vosk_local ^
+  --hidden-import=gemini_proxy --hidden-import=whisper_local --hidden-import=whisper_api --hidden-import=vosk_local --hidden-import=custom_proxy ^
   --collect-binaries vosk --collect-data vosk ^
   --exclude-module matplotlib --exclude-module pandas ^
   --exclude-module scipy --exclude-module IPython ^

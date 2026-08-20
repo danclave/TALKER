@@ -80,7 +80,7 @@ jobs:
           # Unix: same feature set as build.bat (vosk provider, size excludes)
           # minus --splash (needs Tcl/Tk runtime on the runner - not worth the flakiness)
           python -m PyInstaller --onefile --name talker_mic --icon=talker_mic.ico \
-            --hidden-import=gemini_proxy --hidden-import=whisper_local --hidden-import=whisper_api --hidden-import=vosk_local \
+            --hidden-import=gemini_proxy --hidden-import=whisper_local --hidden-import=whisper_api --hidden-import=vosk_local --hidden-import=custom_proxy \
             --collect-binaries vosk --collect-data vosk \
             --exclude-module matplotlib --exclude-module pandas \
             --exclude-module scipy --exclude-module IPython \
@@ -146,6 +146,9 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
         BRANCH_NAME=${{ github.ref_name }}
+        # slashes in branch names break zip asset creation -> sanitize for
+        # FILE names only (tags keep the raw branch; git allows slashes)
+        BRANCH_SAFE=$(echo "$BRANCH_NAME" | sed 's|/|-|g' | sed 's|[^A-Za-z0-9._-]|_|g')
         DATE_STAMP_NEW=$(date +'%Y%m%d')
         DATE_STAMP_OLD=$(date +'%Y.%m.%d')
         
@@ -162,7 +165,7 @@ jobs:
         # Define all naming components
         echo "release_title=Build ($BRANCH_NAME): $VERSION" >> $GITHUB_OUTPUT
         echo "release_tag=$BRANCH_NAME/build-$VERSION" >> $GITHUB_OUTPUT
-        echo "archive_version_part=$BRANCH_NAME-$VERSION" >> $GITHUB_OUTPUT
+        echo "archive_version_part=$BRANCH_SAFE-$VERSION" >> $GITHUB_OUTPUT
         echo "version=$VERSION" >> $GITHUB_OUTPUT
         echo "timestamp=$(date -u +'%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_OUTPUT
 
