@@ -5,13 +5,14 @@ local log = require('framework.logger')
 -- Character class definition
 Character = {}
 
-function Character.new(game_id, name, experience, faction, weapon)
+function Character.new(game_id, name, experience, faction, weapon, objective)
     new_char = {
         game_id = game_id,
         name = name,
         experience = experience,
         faction = faction,
-        weapon = weapon
+        weapon = weapon,
+        objective = objective
     }
     new_char.personality = personalities.get_personality(new_char)
     return new_char
@@ -25,6 +26,9 @@ function Character.describe(character)
     local description = string.format("%s, a %s %s %s", character.name, character.personality, character.experience, character.faction)
     if character.weapon then
         description = description .. " wielding a " .. character.weapon
+    end
+    if character.objective then
+        description = description .. " who is currently " .. character.objective
     end
     return description
 end

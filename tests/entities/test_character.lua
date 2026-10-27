@@ -27,5 +27,23 @@ function testCharacterDescription()
     luaunit.assertStrMatches(description, expected_pattern)
 end
 
+-- Test the AlifePlus objective is appended to the description when present
+function testCharacterDescriptionWithObjective()
+    local char = Character.new(1, "John Doe", "Veteran", "Warrior", "PKM", "Investigating a Massacre Site")
+
+    local description = Character.describe(char)
+
+    luaunit.assertStrContains(description, "who is currently Investigating a Massacre Site")
+end
+
+-- Test the description omits the objective clause when absent
+function testCharacterDescriptionWithoutObjective()
+    local char = Character.new(1, "John Doe", "Veteran", "Warrior")
+
+    local description = Character.describe(char)
+
+    luaunit.assertNotStrContains(description, "who is currently")
+end
+
 -- Run tests
 os.exit(luaunit.LuaUnit.run())

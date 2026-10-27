@@ -68,6 +68,16 @@ function m.create_game_event(unformatted_description, involved_objects, witnesse
     return new_event
 end
 
+-- AlifePlus integration: the squad's current A-Life objective as a phrase, or nil. Inert without AlifePlus.
+local function get_alife_objective(obj)
+    if not (ap_api and ap_api.get_record and ap_api.get_text) then return nil end
+    local squad = query.get_squad(obj)
+    if not squad then return nil end
+    local record = ap_api.get_record({ squad_id = squad.id, assigned = true })
+    if not record or not record.action_key then return nil end
+    return ap_api.get_text(record.action_key)
+end
+
 function m.create_character(game_object_person)
     local game_id = get_id(game_object_person)
     local name = query.get_name(game_object_person)
@@ -78,8 +88,9 @@ function m.create_character(game_object_person)
     if weapon then
         weapon_description = query.get_item_description(weapon)
     end
+    local objective = get_alife_objective(game_object_person)
     log.spam('creating character with id: ' .. game_id .. ', name: ' .. name .. ', experience: ' .. experience .. ', faction: ' .. faction)
-    return Character.new(game_id, name, experience, faction, weapon_description)
+    return Character.new(game_id, name, experience, faction, weapon_description, objective)
 end
 
 function m.get_player_weapon()
