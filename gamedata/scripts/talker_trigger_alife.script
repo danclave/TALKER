@@ -1,0 +1,91 @@
+---@diagnostic disable: undefined-global
+package.path = package.path .. ";./bin/lua/?.lua;"
+
+local interface = require("interface.interface")
+local log = require('framework.logger')
+
+local queries = talker_game_queries
+local RegisterScriptCallback = RegisterScriptCallback
+local pcall, tostring = pcall, tostring
+local table_sort, math_min = table.sort, math.min
+
+-- Feed new AlifePlus activity records to the dialogue system as near-player events; inert without AlifePlus.
+
+local last_cons_id = 0
+local primed = false
+local MAX_EMIT_PER_TICK = 1
+
+-- Build a short event line from a record's own localization keys.
+local function describe_record(r)
+    local action = ap_api.get_text(r.action_key)
+    if not action or action == "" then return nil end
+    local subject = r.subject_name
+    if (not subject or subject == "") and r.subject_faction_key then
+        subject = ap_api.get_text(r.subject_faction_key)
+    end
+    if (not subject or subject == "") and r.subject_species_key then
+        subject = ap_api.get_text(r.subject_species_key)
+    end
+    if subject and subject ~= "" then
+        return subject .. " - " .. action
+    end
+    return action
+end
+
+local function poll_alife_records()
+    if not (ap_api and ap_api.get_records and ap_api.get_text) then return end
+    local recs = ap_api.get_records()
+
+    -- Corpus seq below the last seen means a reset (new game or earlier save); re-prime.
+    local corpus_max = 0
+    for i = 1, #recs do
+        local id = recs[i].cons_id
+        if id and id > corpus_max then corpus_max = id end
+    end
+    if corpus_max < last_cons_id then
+        last_cons_id = 0
+        primed = false
+    end
+
+    -- Collect records newer than the last seen.
+    local fresh = {}
+    for i = 1, #recs do
+        local r = recs[i]
+        if r.cons_id and r.cons_id > last_cons_id then
+            fresh[#fresh + 1] = r
+        end
+    end
+    last_cons_id = corpus_max
+
+    -- First pass only sets the water mark, so a backlog never floods on load.
+    if not primed then primed = true return end
+
+    -- Pass the line as a %s arg, not the format string, so a stray percent is safe.
+    table_sort(fresh, function(a, b) return a.cons_id > b.cons_id end)
+    for i = 1, math_min(#fresh, MAX_EMIT_PER_TICK) do
+        local desc = describe_record(fresh[i])
+        if desc then
+            interface.register_game_event_near_player("%s", { desc }, false)
+        end
+    end
+end
+
+-- Throttle the poll to a fixed interval off the actor update tick.
+local last_check_time_ms = 0
+local CHECK_INTERVAL_MS = 120 * 1000
+local function on_every_ms()
+    if queries.get_game_time_ms() - last_check_time_ms < CHECK_INTERVAL_MS then return end
+    last_check_time_ms = queries.get_game_time_ms()
+    local status, err = pcall(poll_alife_records)
+    if not status then
+        log.error("Error in talker_trigger_alife poll: " .. tostring(err))
+    end
+end
+
+function on_game_start()
+    RegisterScriptCallback("actor_on_update", on_every_ms)
+end
+
+function is_loaded()
+    return true
+end
