@@ -9,13 +9,23 @@ local queries = talker_game_queries
 ----------------------------------------------------------------------------------------------------
 -- INFO
 ----------------------------------------------------------------------------------------------------
--- the callout trigger script is responsible for generating callouts from NPCs to other NPCs
+-- The callout trigger script is responsible for generating callouts from NPCs to other NPCs
 -- on_enemy_eval occurs at high frequency, so we limit the amount of calls
-
+--
 -- RULES
 -- on enemy eval
 --      if the spotter is not in combat
+--      and the target is within callout range (30m)
+--      and both spotter and target are living characters
+--      and cooldown has elapsed (30 seconds)
 --          call out the target
+--
+-- RATIONALE FOR DISTANCE CHECK:
+-- Without a distance check, NPCs continue to spam callouts about enemies that are far away,
+-- particularly after combat has been avoided. The on_enemy_eval callback may still trigger
+-- for distant enemies, causing companions to repeatedly call out the same enemy even when
+-- they are no longer nearby. The 30-meter distance limit ensures callouts only occur for
+-- enemies that are actually relevant and pose an immediate potential threat.
 
 ---------------------------------------------------------------------------------------------
 -- CONDITIONS
@@ -23,12 +33,26 @@ local queries = talker_game_queries
 
 local last_callout_time_ms = 0
 local callout_cooldown_ms = 30 * 1000 -- 30 seconds
+
+-- Maximum distance (in meters) for valid callouts
+-- This prevents NPCs from spamming callouts about enemies that are too far away,
+-- particularly after combat has been avoided and the enemy has moved away
+local MAX_CALLOUT_DISTANCE = 30
+
 function is_valid_callout(npc_obj, target_obj)
+    -- Validate callout conditions:
+    -- 1. Cooldown period has elapsed (prevents spam)
+    -- 2. Both NPC and target are living characters
+    -- 3. NPC and target are enemies
+    -- 4. NPC is not currently in combat
+    -- 5. Target is within callout range (prevents distant callouts after avoided combat)
     is_valid =
         (queries.get_game_time_ms() - last_callout_time_ms) > callout_cooldown_ms   and
         queries.is_living_character(npc_obj)                                        and
+        queries.is_living_character(target_obj)                                     and
         queries.are_enemies(npc_obj, target_obj)                                    and
-        not queries.is_in_combat(npc_obj)
+        not queries.is_in_combat(npc_obj)                                           and
+        queries.get_distance_between(npc_obj, target_obj) <= MAX_CALLOUT_DISTANCE
     -- reset cooldown
     if is_valid then last_callout_time_ms = queries.get_game_time_ms() end
     return is_valid
